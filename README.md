@@ -63,54 +63,41 @@ tests/          pytest suite for data pipeline
 
 ## How to Run
 
-**Prerequisites:** Python 3.11+, [uv](https://github.com/astral-sh/uv), ~50GB disk.
+**Prerequisites:** Python 3.11+, ~50GB disk.
 
 ```bash
-git clone <repo-url> entity-resolution-poc
+git clone https://github.com/jayshah5696/entity-resolution-poc
 cd entity-resolution-poc
-uv sync
-uv run python -c "import sentence_transformers, faiss, rank_bm25; print('OK')"
+pip install -r requirements.txt  # or: pip install faker polars pyarrow python-levenshtein rank-bm25 rich pyyaml typer pytest
 ```
 
-Run scripts in order:
+Scripts use `src.*` imports so always run from the repo root with `PYTHONPATH=.`:
 
 ```bash
-# 1. Generate 1.2M base profiles (~10 min)
-uv run python src/data/generate_profiles.py --config configs/dataset.yaml
+# 1. Generate 1.2M base profiles and split into index/triplets/eval (~20-30 min on M3 Pro)
+python src/data/generate.py \
+    --config configs/dataset.yaml \
+    --output-dir data/
 
-# 2. Build corruption variants and training triplets (~20 min)
-uv run python src/data/build_triplets.py --config configs/dataset.yaml
+# 2. Build training triplets from the 200K triplet_source split (~10-15 min)
+PYTHONPATH=. python src/data/triplets.py \
+    --config configs/dataset.yaml \
+    --profiles data/processed/triplet_source.parquet \
+    --output-dir data/triplets/
 
-# 3. Build eval sets (6 buckets, 10K records)
-uv run python src/data/build_eval.py --config configs/dataset.yaml
-
-# 4. BM25 baseline
-uv run python src/eval/run_eval.py \
-    --experiment experiments/001_bm25_baseline/config.json \
-    --eval-config configs/eval.yaml
-
-# 5. Zero-shot embedding baselines
-uv run python src/eval/run_eval.py \
-    --experiment experiments/002_nomic_zeroshot/config.json \
-    --eval-config configs/eval.yaml
-
-# 6. Fine-tune (4-6h on MPS -- start before leaving)
-uv run python src/models/finetune.py --config configs/finetune.yaml
-
-# 7. Eval fine-tuned models
-uv run python src/eval/run_eval.py \
-    --experiment experiments/003_nomic_finetuned_pipe/config.json \
-    --eval-config configs/eval.yaml
-
-# 8. Aggregate results
-uv run python src/eval/aggregate_results.py --results-dir results/
-# then open notebooks/results_viz.ipynb
+# 3. Build eval query set -- 6 buckets x 10K = 60K queries (~2-3 min)
+PYTHONPATH=. python src/data/eval_set.py \
+    --config configs/dataset.yaml \
+    --eval-profiles data/eval/eval_profiles.parquet \
+    --output-dir data/eval/
 ```
+
+BM25 baseline + eval harness, fine-tuning, and results aggregation scripts are next (in progress).
 
 Tests:
 
 ```bash
-uv run pytest tests/ -v
+PYTHONPATH=. pytest tests/ -v
 ```
 
 ---
