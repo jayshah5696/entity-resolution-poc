@@ -1,247 +1,180 @@
-# Entity Resolution POC — Beating BM25 with Pure Embeddings
+# entity-resolution-poc
 
-> Research project: can fine-tuned Matryoshka embeddings outperform BM25 for structured people-record search at 500M scale?
-
----
-
-## Overview
-
-This repository contains the full research scaffold for a people-entity resolution system built on dense embeddings. The core question is whether a fine-tuned embedding model — using Matryoshka Representation Learning (MRL) + Multiple Negatives Ranking Loss (MNRL) — can beat a strong BM25 baseline on a structured 5-field person schema under realistic data corruption conditions, while remaining production-viable at 500M record scale.
-
-The answer we're testing: **yes, with the right two-stage architecture and domain-specific fine-tuning.**
+Research project testing whether fine-tuned Matryoshka embeddings can beat BM25 for structured people-record matching at 500M scale.
 
 ---
 
-## Problem Statement
+## Problem
 
-People search is deceptively hard. A production B2B data platform might store 500 million contact records and receive queries like:
+The current production system uses BM25 for people-entity resolution across ~500M contact records. It works fine on clean data. On real-world queries -- abbreviated names, typos, missing fields, swapped email domains -- recall drops sharply. "Jon" vs "Jonathan", "Smyth" vs "Smith", a gmail address instead of a work one: BM25 token overlap fails all three.
 
-```
-first_name: Jon   last_name: Smyth   company: Goog   email: j.smith@gmail.com   country: US
-```
-
-The true match is `Jonathan Smith | Google | jonathan.smith@google.com | USA`. BM25 will fail here — token overlap is low, abbreviations are not stemmed to their expansions, and the email domain mismatch destroys recall. A well-trained dense retriever that has seen these corruption patterns can model the semantic proximity directly in embedding space.
-
-**The structured-to-structured matching problem** is distinct from document retrieval. Records are short (< 50 tokens), fields are semantically typed, field presence/absence carries information, and the corruption distribution is known and learnable. This is the regime where BM25's term-frequency assumptions break down fastest.
-
-**Scale reality check:** At 500M records with 768-dim float32 embeddings, you need 1.5TB of RAM just for the index. That's not production. Binary 64-dim embeddings collapse that to ~4GB — that's a server. The architecture must exploit MRL's ability to produce useful representations at multiple dimensionalities.
+The question: can a fine-tuned dense retriever trained on our specific corruption distribution fix this, while still fitting in production memory?
 
 ---
 
-## Architecture
+## Approach
 
-### Two-Stage Retrieval
+Pure embedding retrieval vs BM25, no hybrid. Five models evaluated: one lexical baseline and four embedding models ranging from 22M to 600M parameters.
 
-```
-Query Record (possibly corrupted/partial)
-         │
-         ▼
-  Serialization Layer
-  (pipe or key-value format)
-         │
-         ▼
- ┌───────────────────┐
- │  Stage 1: ANN     │
- │  64-dim binary    │
- │  HNSW index       │   ← ~24GB for 500M records (production-viable)
- │  Recall target:   │
- │  top-100 cands    │
- └───────┬───────────┘
-         │ 100 candidates
-         ▼
- ┌───────────────────┐
- │  Stage 2: Re-rank │
- │  768-dim FP32     │
- │  dot product      │   ← only 100 vectors loaded per query
- │  exact scoring    │
- └───────┬───────────┘
-         │ top-K results
-         ▼
-      Final Results
-```
+Fine-tuning uses Matryoshka Representation Learning (MRL) + Multiple Negatives Ranking Loss (MNRL) on synthetic triplets built from ~1.2M generated profiles. Corruptions applied to anchors mirror what we see in production: abbreviations, Levenshtein-1 typos, field drops, domain swaps, nickname substitutions.
 
-### Memory Math (500M records)
-
-| Format         | Dims | Bytes/vec | Total RAM  | Viable? |
-|----------------|------|-----------|------------|---------|
-| FP32           | 768  | 3,072     | ~1,536 GB  | No      |
-| INT8           | 768  | 768       | ~384 GB    | Barely  |
-| FP32           | 64   | 256       | ~128 GB    | Maybe   |
-| Binary         | 64   | 8         | ~4 GB      | Yes     |
-| Binary         | 768  | 96        | ~48 GB     | Yes     |
-
-Target: binary 64-dim for Stage 1 ANN, full FP32 768-dim for the re-rank of top-100 candidates (768-dim × 100 vectors = 307KB per query — trivial).
-
-### Why MRL
-
-Matryoshka Representation Learning trains a single model to produce embeddings where the first 64 dimensions are themselves a useful representation, the first 128 are better, and so on up to the full 768. This means one fine-tuned model serves both stages without separate model training.
-
-### Serialization
-
-Records are serialized to a single string before embedding. Two formats under test:
-
-**Pipe format:**
-```
-Jonathan Smith | Google Inc | jonathan.smith@google.com | USA
-```
-
-**Key-value format:**
-```
-first_name: Jonathan last_name: Smith company: Google Inc email: jonathan.smith@google.com country: USA
-```
-
-Missing fields are explicitly represented: `first_name: [MISSING]` — this teaches the model that absence is informative, not an error.
+Two-stage retrieval at inference: binary 64-dim HNSW for ANN (4GB for 500M records), then full FP32 768-dim re-rank on top-100 candidates.
 
 ---
 
-## Repo Structure
+## Locked Models
+
+Five models, no additions without team discussion.
+
+| # | Model | Params | Dims | MRL | License | Role |
+|---|-------|--------|------|-----|---------|------|
+| 1 | BM25 (rank_bm25) | -- | -- | -- | Apache | Lexical baseline |
+| 2 | all-MiniLM-L6-v2 | 22M | 384 | No | Apache | Absolute floor |
+| 3 | bge-small-en-v1.5 | 33M | 384 | via FT | MIT | Efficiency story |
+| 4 | gte-modernbert-base | 149M | 768 | Yes | Apache | Primary result |
+| 5 | nomic-embed-text-v1.5 | 137M | 768 | Yes | Apache | MRL reference |
+| 6 | pplx-embed-v1-0.6b | 600M | 1536 | Yes | Apache | SOTA ceiling (zero-shot only) |
+
+Fine-tune targets: bge-small, gte-modernbert-base, nomic-v1.5. MiniLM and pplx are zero-shot only.
+
+Note: nomic requires `search_query:` / `search_document:` prefixes at inference. pplx uses separate system prompts for query vs doc (decoder-only, EOS token pooling). See `docs/model-lock.md`.
+
+---
+
+## Repo Layout
 
 ```
-entity-resolution-poc/
-├── README.md
-├── pyproject.toml              # uv-managed dependencies
-├── configs/
-│   ├── dataset.yaml            # data generation config
-│   ├── models.yaml             # model registry
-│   ├── finetune.yaml           # training hyperparameters
-│   └── eval.yaml               # evaluation settings
-├── docs/
-│   ├── research-design.md      # full research design
-│   ├── dataset-design.md       # dataset spec and corruption types
-│   ├── models.md               # model roster deep-dive
-│   └── evaluation-protocol.md # metrics, index params, latency
-├── src/
-│   ├── data/                   # dataset generation & corruption
-│   ├── models/                 # embedding wrappers & BM25
-│   ├── eval/                   # retrieval evaluation harness
-│   └── utils/                  # serialization, config, logging
-├── experiments/
-│   ├── 001_bm25_baseline/
-│   ├── 002_nomic_zeroshot/
-│   ├── 003_nomic_finetuned_pipe/
-│   ├── 004_nomic_finetuned_kv/
-│   ├── 005_bge_base_finetuned/
-│   ├── 006_binary_twostage/
-│   └── 007_ablation_dims/
-├── data/
-│   ├── raw/                    # generated base profiles (parquet)
-│   ├── processed/              # serialized records
-│   ├── triplets/               # training triplets (parquet)
-│   └── eval/                   # evaluation sets per bucket
-├── models/                     # fine-tuned model checkpoints
-├── results/                    # JSON per experiment + master CSV
-└── notebooks/
-    └── results_viz.ipynb       # results visualization (only notebook)
+configs/        model registry, dataset config, finetune hyperparams, eval settings
+docs/           research design, dataset spec, evaluation protocol, model notes
+src/
+  data/         profile generation, corruption engine, serialization, triplet building
+  models/       embedding wrappers and BM25
+  eval/         retrieval evaluation harness
+  utils/        nicknames, config loading
+experiments/    per-experiment config + notes (001 through 007)
+data/           raw profiles, processed records, triplets, eval sets (parquet)
+models/         fine-tuned checkpoints
+results/        JSON per experiment + master CSV
+notebooks/      results_viz.ipynb
+tests/          pytest suite for data pipeline
 ```
 
 ---
 
-## Quick Start
+## How to Run
 
-### Prerequisites
-
-- Python 3.11+
-- [uv](https://github.com/astral-sh/uv) installed (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
-- ~50GB disk space for data + models
-
-### Setup
+**Prerequisites:** Python 3.11+, [uv](https://github.com/astral-sh/uv), ~50GB disk.
 
 ```bash
 git clone <repo-url> entity-resolution-poc
 cd entity-resolution-poc
-
-# Install all dependencies
 uv sync
-
-# Verify install
 uv run python -c "import sentence_transformers, faiss, rank_bm25; print('OK')"
 ```
 
-### Run Scripts in Order
+Run scripts in order:
 
 ```bash
-# Step 1: Generate base profiles (takes ~10 min for 1.2M records)
+# 1. Generate 1.2M base profiles (~10 min)
 uv run python src/data/generate_profiles.py --config configs/dataset.yaml
 
-# Step 2: Build corruption + triplets
+# 2. Build corruption variants and training triplets (~20 min)
 uv run python src/data/build_triplets.py --config configs/dataset.yaml
 
-# Step 3: Build eval sets (6 buckets, 10K total)
+# 3. Build eval sets (6 buckets, 10K records)
 uv run python src/data/build_eval.py --config configs/dataset.yaml
 
-# Step 4: Run BM25 baseline
+# 4. BM25 baseline
 uv run python src/eval/run_eval.py \
     --experiment experiments/001_bm25_baseline/config.json \
     --eval-config configs/eval.yaml
 
-# Step 5: Run zero-shot embedding baselines
+# 5. Zero-shot embedding baselines
 uv run python src/eval/run_eval.py \
     --experiment experiments/002_nomic_zeroshot/config.json \
     --eval-config configs/eval.yaml
 
-# Step 6: Fine-tune (long — kick off before leaving)
+# 6. Fine-tune (4-6h on MPS -- start before leaving)
 uv run python src/models/finetune.py --config configs/finetune.yaml
 
-# Step 7: Eval fine-tuned model
+# 7. Eval fine-tuned models
 uv run python src/eval/run_eval.py \
     --experiment experiments/003_nomic_finetuned_pipe/config.json \
     --eval-config configs/eval.yaml
 
-# Step 8: Aggregate and visualize results
+# 8. Aggregate results
 uv run python src/eval/aggregate_results.py --results-dir results/
-# Then open notebooks/results_viz.ipynb
+# then open notebooks/results_viz.ipynb
+```
+
+Tests:
+
+```bash
+uv run pytest tests/ -v
 ```
 
 ---
 
 ## Experiment Log
 
-| ID  | Description                          | Status  | Key Result |
-|-----|--------------------------------------|---------|------------|
-| 001 | BM25 Baseline (pipe, 1M index)       | pending |            |
-| 002 | Nomic v1.5 Zero-shot (pipe)          | pending |            |
-| 003 | Nomic v1.5 Fine-tuned (pipe format)  | pending |            |
-| 004 | Nomic v1.5 Fine-tuned (KV format)    | pending |            |
-| 005 | BGE-Base Fine-tuned (pipe format)    | pending |            |
-| 006 | Binary Two-Stage (64D→768D re-rank)  | pending |            |
-| 007 | Ablation: Dimensionality (all dims)  | pending |            |
+| ID  | Name                                | Status  | Key Result |
+|-----|-------------------------------------|---------|------------|
+| 001 | BM25 baseline (pipe, 1M index)      | pending |            |
+| 002 | Nomic v1.5 zero-shot (pipe)         | pending |            |
+| 003 | Nomic v1.5 fine-tuned (pipe)        | pending |            |
+| 004 | Nomic v1.5 fine-tuned (KV)          | pending |            |
+| 005 | BGE-small fine-tuned (pipe)         | pending |            |
+| 006 | Binary two-stage (64D ANN + 768D rerank) | pending |       |
+| 007 | Dimensionality ablation (all dims)  | pending |            |
 
-**Update this table after each experiment.** Key Result should be Recall@1 on the `pristine` bucket vs BM25 baseline delta (e.g., `+12.3pp R@1 pristine, +31.2pp R@1 typo_name`).
+Update this table after each experiment. Key Result = Recall@1 on pristine bucket vs BM25 delta (e.g. "+12.3pp R@1 pristine, +31.2pp R@1 typo_name").
 
----
-
-## Contributing / Documenting Results
-
-### After Each Experiment
-
-1. Fill in `experiments/00N_name/notes.md` — hypothesis, setup, results, observations, next steps.
-2. Update the Experiment Log table in this README.
-3. Commit with message format: `exp(00N): <one-line result summary>`
-
-### Result Files
-
-Each experiment produces:
-- `results/exp_00N_<name>.json` — full metrics across all buckets and top-K values
-- Appended row in `results/master_results.csv`
-
-### Config Changes
-
-If you change a config mid-experiment, copy the original config into the experiment's directory before modifying. Configs in `configs/` should reflect the current best settings, not historical ones.
-
-### Reproducibility
-
-All randomness is seeded via `random_seed: 42` in `configs/dataset.yaml`. Always pass `--seed 42` to scripts that accept it. Document any deviations in the experiment notes.
+After each experiment:
+1. Fill in `experiments/00N_name/notes.md`
+2. Update this table
+3. Commit: `exp(00N): <one-line result>`
 
 ---
 
-## Research Context
+## Notes
 
-- **Task:** Structured people-entity resolution (B2B scale)
-- **Schema:** `first_name | last_name | company | email | country`
-- **Scale target:** 500M records
-- **Baseline to beat:** BM25 (rank_bm25, k1=1.5, b=0.75)
-- **Primary metric:** Recall@1 and Recall@10 across 6 corruption buckets
-- **Hardware:** Apple M3 Pro (MPS) — no CUDA, FP16 disabled, MPS mixed precision enabled
-- **Expected runtime:** ~4-6h fine-tuning, ~2h eval across all experiments
+### Serialization Formats
 
-See `docs/research-design.md` for the full research design rationale.
+Two formats under test for how records are converted to strings before embedding:
+
+**Pipe** -- compact, position carries meaning:
+```
+Jonathan Smith | Google Inc | jonathan.smith@google.com | USA
+```
+Missing field (empty slot preserved):
+```
+ | Smith | Google Inc | jonathan.smith@google.com | USA
+```
+
+**KV** -- self-describing, better for zero-shot:
+```
+fn:Jonathan ln:Smith org:Google Inc em:jonathan.smith@google.com co:USA
+```
+Missing field:
+```
+fn: ln:Smith org:Google Inc em:jonathan.smith@google.com co:USA
+```
+
+Hypothesis: pipe wins after fine-tuning (fewer tokens, model learns structure). KV wins zero-shot (labels give the model prior knowledge). Testing both confirms.
+
+See `src/data/serialize.py` for implementation and `tests/test_serialize.py` for round-trip tests.
+
+### Eval Buckets
+
+Six corruption categories, each 10K queries:
+
+| Bucket | What changes | Tests |
+|--------|--------------|-------|
+| pristine | nothing | baseline recall on clean data |
+| missing_firstname | first_name dropped | partial record -- name-only miss |
+| missing_email_company | email + company dropped | severe partial (2 fields gone) |
+| typo_name | Levenshtein-1/2 on first or last name | typo robustness |
+| domain_mismatch | email domain swapped to personal domain | gmail vs work email |
+| swapped_attributes | first_name and last_name swapped | schema confusion |
+
+See `src/data/corrupt.py` and `tests/test_corrupt.py`.
