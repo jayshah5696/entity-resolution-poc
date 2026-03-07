@@ -324,6 +324,9 @@ def main() -> None:
         device=args.device if args.device != "cpu" else None,
     )
     console.print(f"[green]Model loaded. Embedding dim: {model.get_sentence_embedding_dimension()}")
+    # Detect actual device AFTER loading -- ST may auto-select MPS even when device=None
+    actual_device_type = next(model.parameters()).device.type
+    use_mps = actual_device_type == "mps"
 
     # ---- Setup loss ----
     inner_loss = MultipleNegativesRankingLoss(model=model, scale=mnrl_scale)
@@ -357,7 +360,7 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # MPS-specific settings: no fp16/bf16 (not supported on MPS via Trainer)
-    use_mps = args.device == "mps"
+    # use_mps already detected above from actual model device
     steps_per_epoch = len(train_dataset) // batch_size
     total_steps = steps_per_epoch * epochs
     warmup_steps = max(1, int(total_steps * warmup_ratio))
