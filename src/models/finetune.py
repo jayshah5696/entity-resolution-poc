@@ -21,11 +21,16 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import random
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+
+# Must be set before torch is imported -- required for MPS ops not yet in Metal
+# (cumsum, isin, etc.) to fall back to CPU. No-op on CUDA/CPU.
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
 import polars as pl
 import yaml
@@ -359,15 +364,28 @@ def main() -> None:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # MPS-specific settings: no fp16/bf16 (not supported on MPS via Trainer)
+    # MPS-specific settings: no fp16/bf16, workers=0, batch cap
     # use_mps already detected above from actual model device
-    steps_per_epoch = len(train_dataset) // batch_size
+    # MPS hardware limit: batch_size * embedding_dim must stay < 65536
+    # e.g. 768-dim model: max safe batch = 65536 // 768 = 85, cap at 32 for safety
+    effective_batch_size = batch_size
+    if use_mps:
+        mps_batch_cap = max(1, 65536 // (model.get_sentence_embedding_dimension() * 2))
+        mps_batch_cap = min(mps_batch_cap, 32)  # community-tested safe cap
+        if batch_size > mps_batch_cap:
+            console.print(
+                f"[yellow]MPS batch cap: reducing batch {batch_size} -> {mps_batch_cap} "
+                f"(output channels limit). Use gradient_accumulation_steps to compensate."
+            )
+            effective_batch_size = mps_batch_cap
+
+    steps_per_epoch = len(train_dataset) // effective_batch_size
     total_steps = steps_per_epoch * epochs
     warmup_steps = max(1, int(total_steps * warmup_ratio))
     train_args = SentenceTransformerTrainingArguments(
         output_dir=str(output_dir),
         num_train_epochs=epochs,
-        per_device_train_batch_size=batch_size,
+        per_device_train_batch_size=effective_batch_size,
         learning_rate=learning_rate,
         warmup_steps=warmup_steps,
         weight_decay=weight_decay,
