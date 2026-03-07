@@ -1,5 +1,8 @@
 """
-run_bm25.py -- Evaluate a BM25 index across all 6 corruption buckets.
+run_bm25.py -- Evaluate a BM25 (LanceDB FTS) index across all 6 corruption buckets.
+
+The BM25 index is stored in LanceDB using native FTS (Tantivy). No pickle files.
+Same storage format as the dense vector indexes.
 
 Usage:
     uv run python src/eval/run_bm25.py \\
@@ -10,12 +13,12 @@ Usage:
         --experiment-id 001
 
 Optimizations:
-    - Uses get_scores() + np.argpartition instead of get_top_n (no full sort)
-    - Parallelizes across queries with joblib (uses all CPU cores by default)
-    - tqdm progress bar per bucket
-    - Overall metrics computed from cached per-query results, not re-run
+    - LanceDB FTS queries are already fast (Tantivy inverted index)
+    - Parallel metric computation via joblib
+    - tqdm progress per bucket
+    - Overall metrics from cached per-query results (no re-run)
 
-Output JSON matches the ADR-003 schema used by aggregate.py.
+Output JSON matches ADR-003 schema used by aggregate.py.
 """
 
 from __future__ import annotations
@@ -39,7 +42,6 @@ from tqdm import tqdm
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.eval.metrics import aggregate_metrics, compute_metrics
-from src.models.encoder import BM25Encoder
 
 console = Console()
 
@@ -54,32 +56,37 @@ BUCKETS = [
 
 
 # ---------------------------------------------------------------------------
-# Per-query worker (called in parallel)
+# Helpers
 # ---------------------------------------------------------------------------
 
 
-def _score_one(
-    query_tokens: list[str],
-    entity_ids: list[str],
-    scores: np.ndarray,
+def _query_fts(table, query_text: str, top_k: int) -> list[str]:
+    """Run a single FTS query and return list of entity_ids."""
+    results = (
+        table.search(query_text, query_type="fts")
+        .limit(top_k)
+        .select(["entity_id"])
+        .to_list()
+    )
+    return [r["entity_id"] for r in results]
+
+
+def _eval_one(
+    query_text: str,
     ground_truth_id: str,
+    retrieved_ids: list[str],
     top_k: int,
 ) -> dict:
-    """
-    Given precomputed BM25 scores for one query, extract top-k entity IDs
-    and compute retrieval metrics.
-    """
-    n = min(top_k, len(scores))
-    # argpartition is O(n), much faster than argsort for large n
-    top_indices = np.argpartition(scores, -n)[-n:]
-    top_indices = top_indices[np.argsort(scores[top_indices])[::-1]]
-    retrieved_ids = [entity_ids[i] for i in top_indices]
     return compute_metrics(retrieved_ids, ground_truth_id, ks=[1, 5, 10])
 
 
-def evaluate_bucket_parallel(
-    bm25_obj,
-    entity_ids: list[str],
+# ---------------------------------------------------------------------------
+# Bucket evaluation
+# ---------------------------------------------------------------------------
+
+
+def evaluate_bucket(
+    table,
     query_texts: list[str],
     ground_truth_ids: list[str],
     top_k: int,
@@ -87,41 +94,30 @@ def evaluate_bucket_parallel(
     bucket_name: str,
 ) -> list[dict]:
     """
-    Evaluate all queries in a bucket using joblib parallelism.
-
-    Pre-computes get_scores() for all queries first (numpy, fast),
-    then distributes metric computation across cores.
+    Run FTS queries for all queries in a bucket, then compute metrics in parallel.
     """
-    n = len(query_texts)
+    # Run all queries sequentially (LanceDB FTS is already fast via Tantivy)
+    retrieved_all: list[list[str]] = []
+    for q in tqdm(query_texts, desc=f"  FTS {bucket_name}", leave=False):
+        retrieved_all.append(_query_fts(table, q, top_k))
 
-    # Tokenize all queries upfront (fast, single-threaded is fine)
-    tokenized = [q.lower().split() for q in
-                 tqdm(query_texts, desc=f"  Tokenizing {bucket_name}", leave=False)]
-
-    # Compute BM25 scores for all queries with progress bar
-    # get_scores() is the fast numpy path -- no Python sort
-    all_scores = []
-    for tokens in tqdm(tokenized, desc=f"  Scoring {bucket_name}", leave=False):
-        all_scores.append(bm25_obj.get_scores(tokens))
-
-    # Parallel metric computation (CPU-bound, benefits from multiprocessing)
+    # Parallel metric computation
     per_query = Parallel(n_jobs=n_jobs, backend="loky")(
-        delayed(_score_one)(
-            tokenized[i], entity_ids, all_scores[i], ground_truth_ids[i], top_k
+        delayed(_eval_one)(
+            query_texts[i], ground_truth_ids[i], retrieved_all[i], top_k
         )
-        for i in tqdm(range(n), desc=f"  Metrics {bucket_name}", leave=False)
+        for i in tqdm(range(len(query_texts)), desc=f"  Metrics {bucket_name}", leave=False)
     )
-
     return per_query
 
 
 # ---------------------------------------------------------------------------
-# Latency measurement (single-threaded, realistic per-query numbers)
+# Latency measurement
 # ---------------------------------------------------------------------------
 
 
 def measure_latency(
-    bm25_obj,
+    table,
     query_texts: list[str],
     top_k: int,
     n_warmup: int = 100,
@@ -132,18 +128,12 @@ def measure_latency(
     measure = query_texts[: min(n_measure, n_all)]
 
     for q in warmup:
-        scores = bm25_obj.get_scores(q.lower().split())
-        n = min(top_k, len(scores))
-        np.argpartition(scores, -n)[-n:]
+        _query_fts(table, q, top_k)
 
     latencies_ms: list[float] = []
     for q in measure:
         t0 = time.perf_counter()
-        tokens = q.lower().split()
-        scores = bm25_obj.get_scores(tokens)
-        n = min(top_k, len(scores))
-        top_idx = np.argpartition(scores, -n)[-n:]
-        top_idx[np.argsort(scores[top_idx])[::-1]]
+        _query_fts(table, q, top_k)
         latencies_ms.append((time.perf_counter() - t0) * 1000.0)
 
     arr = np.array(latencies_ms)
@@ -162,9 +152,9 @@ def measure_latency(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Evaluate a BM25 retrieval index across all corruption buckets."
+        description="Evaluate a LanceDB FTS (BM25) index across all corruption buckets."
     )
-    parser.add_argument("--index-dir", required=True)
+    parser.add_argument("--index-dir", required=True, help="LanceDB index directory")
     parser.add_argument("--eval-queries", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--models-config", default="configs/models.yaml")
@@ -176,7 +166,7 @@ def parse_args() -> argparse.Namespace:
         "--n-jobs",
         type=int,
         default=-1,
-        help="Number of parallel jobs for metric computation. -1 = all cores.",
+        help="Parallel jobs for metric computation. -1 = all cores.",
     )
     return parser.parse_args()
 
@@ -184,32 +174,25 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
-    with open(args.models_config) as f:
-        all_model_cfg = yaml.safe_load(f)
     with open(args.eval_config) as f:
         eval_cfg = yaml.safe_load(f)
 
     top_k = args.top_k
     buckets = eval_cfg.get("buckets", BUCKETS)
 
-    # Load BM25 index
-    index_dir = Path(args.index_dir)
-    bm25_path = index_dir / "bm25.pkl"
-    entity_ids_path = index_dir / "entity_ids.json"
+    # Open LanceDB FTS index
+    import lancedb
 
-    if not bm25_path.exists():
-        console.print(f"[red]BM25 index not found: {bm25_path}")
+    index_dir = Path(args.index_dir)
+    if not index_dir.exists():
+        console.print(f"[red]Index directory not found: {index_dir}")
         sys.exit(1)
 
-    console.print(f"[bold cyan]Loading BM25 index from {bm25_path}...")
-    import pickle
-    with open(bm25_path, "rb") as f:
-        bm25_obj = pickle.load(f)
-    with open(entity_ids_path) as f:
-        entity_ids: list[str] = json.load(f)
-
-    n_records = len(entity_ids)
-    console.print(f"[green]Loaded BM25 index with {n_records:,} documents.")
+    console.print(f"[bold cyan]Opening LanceDB FTS index at {index_dir}...")
+    db = lancedb.connect(str(index_dir))
+    table = db.open_table("index")
+    n_records = table.count_rows()
+    console.print(f"[green]Loaded FTS index with {n_records:,} documents.")
 
     # Load eval queries
     console.print(f"[bold cyan]Loading eval queries from {args.eval_queries}...")
@@ -222,7 +205,6 @@ def main() -> None:
         sys.exit(1)
     console.print(f"[cyan]Query column: '{query_col}' | n_jobs: {args.n_jobs}")
 
-    # Index size
     index_size_mb = sum(
         Path(root, fname).stat().st_size
         for root, _, files in os.walk(index_dir)
@@ -241,17 +223,12 @@ def main() -> None:
             continue
 
         console.print(f"\n[bold cyan]Bucket: '{bucket}' ({n_bucket:,} queries)")
-
         query_texts = bucket_df[query_col].to_list()
         ground_truth_ids = bucket_df["ground_truth_entity_id"].to_list()
 
-        # Latency (single-threaded, realistic)
-        latency_info = measure_latency(bm25_obj, query_texts, top_k)
-
-        # Parallel eval
-        per_query = evaluate_bucket_parallel(
-            bm25_obj=bm25_obj,
-            entity_ids=entity_ids,
+        latency_info = measure_latency(table, query_texts, top_k)
+        per_query = evaluate_bucket(
+            table=table,
             query_texts=query_texts,
             ground_truth_ids=ground_truth_ids,
             top_k=top_k,
@@ -274,13 +251,9 @@ def main() -> None:
             f"p50={latency_info['p50']:.1f}ms"
         )
 
-    # Overall metrics from cached results (no re-run)
     overall_metrics = aggregate_metrics(all_per_query)
-
-    latency_samples = [
-        m.get("latency_ms", {}).get("p50", 0) for m in per_bucket_metrics.values()
-    ]
-    arr = np.array(latency_samples) if latency_samples else np.array([0.0])
+    latency_vals = [m.get("latency_ms", {}).get("p50", 0) for m in per_bucket_metrics.values()]
+    arr = np.array(latency_vals) if latency_vals else np.array([0.0])
     overall_latency = {
         "p50": float(np.median(arr)),
         "p95": float(np.percentile(arr, 95)),
@@ -289,11 +262,11 @@ def main() -> None:
     }
 
     # Summary table
-    table = Table(title="BM25 Eval Results", show_header=True)
+    table_out = Table(title="BM25 (LanceDB FTS) Eval Results", show_header=True)
     for col in ["Bucket", "R@1", "R@5", "R@10", "MRR@10", "NDCG@10", "p50ms"]:
-        table.add_column(col)
+        table_out.add_column(col)
     for bucket, bm in per_bucket_metrics.items():
-        table.add_row(
+        table_out.add_row(
             bucket,
             f"{bm.get('recall_at_1', 0):.3f}",
             f"{bm.get('recall_at_5', 0):.3f}",
@@ -302,7 +275,7 @@ def main() -> None:
             f"{bm.get('ndcg_at_10', 0):.3f}",
             f"{bm.get('latency_ms', {}).get('p50', 0):.1f}",
         )
-    table.add_row(
+    table_out.add_row(
         "[bold]Overall[/bold]",
         f"[bold]{overall_metrics.get('recall_at_1', 0):.3f}[/bold]",
         f"[bold]{overall_metrics.get('recall_at_5', 0):.3f}[/bold]",
@@ -311,20 +284,19 @@ def main() -> None:
         f"[bold]{overall_metrics.get('ndcg_at_10', 0):.3f}[/bold]",
         f"[bold]{overall_latency['p50']:.1f}[/bold]",
     )
-    console.print(table)
+    console.print(table_out)
 
-    # Build output JSON (ADR-003 schema)
+    # ADR-003 schema output
     per_bucket_clean: dict[str, dict] = {}
     per_bucket_latency_ms: dict[str, dict] = {}
     for bucket, bm in per_bucket_metrics.items():
-        per_bucket_clean[bucket] = {
-            k: v for k, v in bm.items() if k not in ("latency_ms",)
-        }
+        per_bucket_clean[bucket] = {k: v for k, v in bm.items() if k != "latency_ms"}
         per_bucket_latency_ms[bucket] = bm.get("latency_ms", {})
 
     result = {
         "experiment_id": args.experiment_id,
         "model": "bm25_baseline",
+        "index_type": "lancedb_fts",
         "serialization": args.serialization,
         "mode": "zero_shot",
         "quantization": None,

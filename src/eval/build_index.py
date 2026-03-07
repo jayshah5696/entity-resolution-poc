@@ -155,23 +155,50 @@ def build_lance_ann_index(table, dim: int) -> None:
 
 
 def build_bm25_index(
-    encoder: BM25Encoder,
     entity_ids: list[str],
     texts: list[str],
     output_dir: Path,
 ) -> None:
-    """Tokenize texts, build BM25Okapi, save to disk."""
-    console.print(f"[bold cyan]Building BM25 index for {len(texts):,} records...")
+    """
+    Store documents in LanceDB and build a native FTS (BM25) index.
 
-    encoder.set_entity_ids(entity_ids)
-    encoder.encode_docs(texts)  # builds internal BM25 index
+    Uses LanceDB's built-in full-text search (Tantivy under the hood).
+    No pickle files -- same storage format as dense indexes. Query with
+    table.search(query, query_type="fts").
 
-    bm25_path = output_dir / "bm25.pkl"
-    entity_ids_path = output_dir / "entity_ids.json"
-    encoder.save(str(bm25_path), str(entity_ids_path))
+    Index directory naming: results/indexes/bm25_{serialization}/
+    """
+    import lancedb
+    from tqdm import tqdm
 
-    console.print(f"[green]BM25 index saved -> {bm25_path}")
-    console.print(f"[green]Entity IDs saved -> {entity_ids_path}")
+    console.print(f"[bold cyan]Building LanceDB FTS index for {len(texts):,} records...")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    db = lancedb.connect(str(output_dir))
+
+    # Write docs in batches
+    write_batch = 50_000
+    table = None
+    for i in tqdm(range(0, len(texts), write_batch), desc="Writing to LanceDB"):
+        batch = {
+            "entity_id": entity_ids[i : i + write_batch],
+            "text": texts[i : i + write_batch],
+        }
+        if table is None:
+            table = db.create_table("index", data=batch, mode="overwrite")
+        else:
+            table.add(batch)
+
+    if table is None:
+        raise RuntimeError("No documents to index.")
+
+    # Build native FTS index (BM25 via Tantivy, no extra deps beyond lancedb)
+    console.print("[bold cyan]Building FTS index (BM25 via Tantivy)...")
+    table.create_fts_index("text", use_tantivy=False, replace=True)
+
+    n = table.count_rows()
+    console.print(f"[green]FTS index built -- {n:,} documents indexed.")
+    console.print(f"[green]Index saved -> {output_dir}")
 
 
 # ---------------------------------------------------------------------------
@@ -349,7 +376,6 @@ def main() -> None:
 
     if is_bm25:
         build_bm25_index(
-            encoder=encoder,
             entity_ids=entity_ids,
             texts=texts,
             output_dir=output_dir,
