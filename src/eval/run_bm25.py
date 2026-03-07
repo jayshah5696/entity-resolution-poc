@@ -244,7 +244,7 @@ def main() -> None:
         }
 
         console.print(
-            f"  [green]R@1={bucket_agg.get('recall_at_1', 0):.3f}  "
+            f"  [green]R@5={bucket_agg.get('recall_at_5', 0):.3f}  "
             f"R@10={bucket_agg.get('recall_at_10', 0):.3f}  "
             f"MRR={bucket_agg.get('mrr_at_10', 0):.3f}  "
             f"p50={latency_info['p50']:.1f}ms"
@@ -262,12 +262,11 @@ def main() -> None:
 
     # Summary table
     table_out = Table(title="BM25 (LanceDB FTS) Eval Results", show_header=True)
-    for col in ["Bucket", "R@1", "R@5", "R@10", "MRR@10", "NDCG@10", "p50ms"]:
+    for col in ["Bucket", "R@5", "R@10", "MRR@10", "NDCG@10", "p50ms"]:
         table_out.add_column(col)
     for bucket, bm in per_bucket_metrics.items():
         table_out.add_row(
             bucket,
-            f"{bm.get('recall_at_1', 0):.3f}",
             f"{bm.get('recall_at_5', 0):.3f}",
             f"{bm.get('recall_at_10', 0):.3f}",
             f"{bm.get('mrr_at_10', 0):.3f}",
@@ -276,7 +275,6 @@ def main() -> None:
         )
     table_out.add_row(
         "[bold]Overall[/bold]",
-        f"[bold]{overall_metrics.get('recall_at_1', 0):.3f}[/bold]",
         f"[bold]{overall_metrics.get('recall_at_5', 0):.3f}[/bold]",
         f"[bold]{overall_metrics.get('recall_at_10', 0):.3f}[/bold]",
         f"[bold]{overall_metrics.get('mrr_at_10', 0):.3f}[/bold]",

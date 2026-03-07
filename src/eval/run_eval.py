@@ -340,7 +340,7 @@ def main() -> None:
         }
 
         console.print(
-            f"  [green]R@1={bucket_metrics.get('recall_at_1', 0):.3f}  "
+            f"  [green]R@5={bucket_metrics.get('recall_at_5', 0):.3f}  "
             f"R@10={bucket_metrics.get('recall_at_10', 0):.3f}  "
             f"MRR={bucket_metrics.get('mrr_at_10', 0):.3f}  "
             f"p50={latency_info['p50']:.2f}ms"
@@ -367,7 +367,6 @@ def main() -> None:
     # ---- Print summary table ----
     table_out = Table(title=f"Dense Eval: {args.model}", show_header=True)
     table_out.add_column("Bucket")
-    table_out.add_column("R@1", style="green")
     table_out.add_column("R@5", style="cyan")
     table_out.add_column("R@10", style="bold cyan")
     table_out.add_column("MRR@10", style="yellow")
@@ -377,7 +376,6 @@ def main() -> None:
     for bucket, bm in per_bucket_metrics.items():
         table_out.add_row(
             bucket,
-            f"{bm.get('recall_at_1', 0):.3f}",
             f"{bm.get('recall_at_5', 0):.3f}",
             f"{bm.get('recall_at_10', 0):.3f}",
             f"{bm.get('mrr_at_10', 0):.3f}",
@@ -387,7 +385,6 @@ def main() -> None:
 
     table_out.add_row(
         "[bold]Overall[/bold]",
-        f"[bold]{overall_metrics.get('recall_at_1', 0):.3f}[/bold]",
         f"[bold]{overall_metrics.get('recall_at_5', 0):.3f}[/bold]",
         f"[bold]{overall_metrics.get('recall_at_10', 0):.3f}[/bold]",
         f"[bold]{overall_metrics.get('mrr_at_10', 0):.3f}[/bold]",
