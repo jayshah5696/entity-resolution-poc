@@ -65,7 +65,6 @@ def _query_fts(table, query_text: str, top_k: int) -> list[str]:
     results = (
         table.search(query_text, query_type="fts")
         .limit(top_k)
-        .select(["entity_id"])
         .to_list()
     )
     return [r["entity_id"] for r in results]
