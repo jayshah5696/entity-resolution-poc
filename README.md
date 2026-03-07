@@ -99,10 +99,12 @@ uv run python src/data/eval_set.py \
 
 ```bash
 # 4. Build BM25 index (~5-10 min for 1M records)
+# --eval-profiles is required: eval entity_ids must exist in the index
 uv run python src/eval/build_index.py \
     --model bm25_baseline \
     --serialization pipe \
     --index-profiles data/processed/index.parquet \
+    --eval-profiles data/eval/eval_profiles.parquet \
     --output-dir results/indexes/bm25_pipe \
     --models-config configs/models.yaml
 
@@ -120,6 +122,7 @@ uv run python src/eval/build_index.py \
     --serialization pipe \
     --quantization fp32 \
     --index-profiles data/processed/index.parquet \
+    --eval-profiles data/eval/eval_profiles.parquet \
     --output-dir results/indexes/gte_modernbert_base_pipe_fp32 \
     --device mps
 

@@ -312,7 +312,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--index-profiles",
         required=True,
-        help="Parquet file with index profiles",
+        help="Parquet file with index profiles (data/processed/index.parquet)",
+    )
+    parser.add_argument(
+        "--eval-profiles",
+        default=None,
+        help=(
+            "Parquet file with eval profiles to INCLUDE in the index "
+            "(data/eval/eval_profiles.parquet). Required for correct evaluation: "
+            "eval queries reference entity_ids that must exist in the index."
+        ),
     )
     parser.add_argument("--output-dir", required=True, help="Output directory for index")
     parser.add_argument(
@@ -354,7 +363,24 @@ def main() -> None:
     # ---- Load index profiles ----
     console.print(f"[bold]Loading index profiles from {args.index_profiles}...")
     df = pl.read_parquet(args.index_profiles)
-    console.print(f"[cyan]Loaded {len(df):,} profiles. Columns: {df.columns}")
+    console.print(f"[cyan]Loaded {len(df):,} index profiles.")
+
+    # ---- Merge eval profiles into index (REQUIRED for correct eval) ----
+    # Eval queries reference entity_ids from eval_profiles.parquet.
+    # Those entity_ids must exist in the index or Recall is always 0.
+    if args.eval_profiles:
+        eval_df = pl.read_parquet(args.eval_profiles)
+        console.print(
+            f"[cyan]Adding {len(eval_df):,} eval profiles to index "
+            f"(eval entity_ids must be retrievable)."
+        )
+        df = pl.concat([df, eval_df], how="vertical")
+        console.print(f"[cyan]Total index size: {len(df):,} profiles.")
+    else:
+        console.print(
+            "[yellow]Warning: --eval-profiles not set. "
+            "Eval entity_ids will not be in the index and Recall will be 0."
+        )
 
     # ---- Serialize profiles ----
     console.print(f"[bold cyan]Serializing profiles with format='{args.serialization}'...")
