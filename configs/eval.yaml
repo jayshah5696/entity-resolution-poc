@@ -1,6 +1,29 @@
 # Evaluation Configuration
 # Controls all aspects of the retrieval evaluation harness.
 # All eval scripts read from this file.
+# Model list locked: March 2026 — see configs/models.yaml and docs/model-lock.md
+
+# ── Locked Model Roster ────────────────────────────────────────────────────────
+# EXACTLY these 5 models. No others. Do not add without updating the lock.
+# Full model specs (HF IDs, dims, prefixes, pooling) live in configs/models.yaml.
+models:
+  zero_shot_only:
+    - minilm_l6          # 22M, 384D, floor baseline
+    - pplx_embed_v1_06b  # 600M, 1536D, SOTA ceiling — separate query/doc system prompts
+
+  finetune_targets:
+    - bge_small           # 33M, 384D, MIT — efficiency story; MRL added via MatryoshkaLoss
+    - gte_modernbert_base # 149M, 768D — PRIMARY fine-tune target
+    - nomic_v15           # 137M, 768D — MRL reference; REQUIRES search_query:/search_document: prefixes
+
+  baselines:
+    - bm25_baseline       # lexical baseline; k1=1.5, b=0.75
+
+# Eval modes per model type:
+#   zero_shot_only   → evaluate pre-trained weights only, no fine-tuning
+#   finetune_targets → evaluate BOTH zero-shot (pre-trained) AND fine-tuned checkpoints
+#   baselines        → evaluate as-is (BM25 has no weights to train)
+
 
 # ── Index Sizes ────────────────────────────────────────────────────────────────
 # Evaluate at multiple scales to understand how performance degrades with index size.

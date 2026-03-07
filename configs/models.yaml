@@ -1,6 +1,6 @@
-# Model Registry for Entity Resolution POC
-# All models are Apache 2.0 or MIT licensed (open weights, commercial-friendly)
-# Last updated: 2026-03 — added pplx-embed-v1 (Perplexity AI, MIT, new top tier)
+# Entity Resolution POC — LOCKED MODEL LIST
+# Locked: March 2026
+# 5 models total. No others. Do not add without updating this lock.
 
 # ─── BASELINES ───────────────────────────────────────────────────────────────
 
@@ -10,180 +10,102 @@ bm25_baseline:
   params_m: 0
   dims: null
   license: apache2
-  mrl_native: false
-  notes: "Lexical baseline. k1=1.5, b=0.75. Fails on typos and partial fields."
+  role: baseline
+  eval_mode: zero_shot
+  notes: "Lexical baseline. k1=1.5, b=0.75."
 
-# ─── TIER 1: PRIMARY CANDIDATES (MRL-native, strong retrieval) ───────────────
-
-nomic_v15:
-  hf_id: nomic-ai/nomic-embed-text-v1.5
-  dims: [768, 512, 256, 128, 64]
-  license: apache2
-  mrl_native: true
-  params_m: 137
-  mteb_avg: 62.3
-  released: "2024-02"
-  notes: "MRL baked into training (not bolted on). Gold standard for open Apache MRL models. use 'search_query:' prefix at query time."
-
-gte_modernbert_base:
-  hf_id: Alibaba-NLP/gte-modernbert-base
-  dims: [768, 512, 256, 128, 64]
-  license: apache2
-  mrl_native: true
-  params_m: 149
-  mteb_avg: 66.4
-  released: "2025-01"
-  notes: "NEW Jan 2025. ModernBERT backbone — RoPE, Flash Attention, 8192 ctx. Best MTEB/param tradeoff in 2025. Top pick for structured entity records. Strong short-text retrieval."
-
-pplx_embed_v1_06b:
-  hf_id: perplexity-ai/pplx-embed-v1-0.6b
-  dims: [1024, 512, 256, 128, 64]
-  license: mit
-  mrl_native: true
-  params_m: 600
-  mteb_avg: null  # check paper for actual score
-  released: "2026-03"
-  architecture: bidirectional_qwen3_diffusion
-  quantization_native: [int8, binary]
-  instruction_prefix_required: false
-  pooling: mean
-  context_length: 32768
-  multilingual: true
-  sentence_transformers: true
-  onnx: true
-  tei_compatible: true
-  api_endpoint: "api.perplexity.ai/v1/embeddings"
-  notes: "NEW Mar 2026. Diffusion pre-trained bidirectional Qwen3. MIT license. MRL native. Native INT8/binary quantization — use cosine similarity on UNNORMALIZED embeddings. No instruction prefix needed. Strongest open-weight embedding released in 2026. Also has pplx-embed-v1-4b (2560D) and context variants for RAG."
-
-pplx_embed_v1_4b:
-  hf_id: perplexity-ai/pplx-embed-v1-4b
-  dims: [2560, 1024, 512, 256, 128]
-  license: mit
-  mrl_native: true
-  params_m: 4000
-  mteb_avg: null
-  released: "2026-03"
-  architecture: bidirectional_qwen3_diffusion
-  quantization_native: [int8, binary]
-  instruction_prefix_required: false
-  pooling: mean
-  context_length: 32768
-  multilingual: true
-  notes: "4B variant. 2560D. Quality ceiling of the pplx-embed family. Too large for M3 Pro fine-tuning — zero-shot eval only."
-
-nomic_v2_moe:
-  hf_id: nomic-ai/nomic-embed-text-v2-moe
-  dims: [768, 512, 256, 128, 64]
-  license: apache2
-  mrl_native: true
-  params_m: 475  # total; ~137M active (8-expert MoE)
-  params_active_m: 137
-  mteb_avg: 63.0
-  released: "2025-Q1"
-  notes: "NEW 2025. Mixture of Experts — fast inference despite large param count. Upgrade from v1.5. Good general semantic match. MRL supported."
-
-arctic_embed_m_v15:
-  hf_id: Snowflake/snowflake-arctic-embed-m-v1.5
-  dims: [768, 512, 256, 128, 64]
-  license: apache2
-  mrl_native: true
-  params_m: 109
-  mteb_avg: 64.6
-  released: "2024-Q4"
-  notes: "MRL is a core design feature, not afterthought. Built for efficient retrieval pipelines. Excellent at dimension compression without recall drop. Strong for structured record matching."
-
-mxbai_large_v1:
-  hf_id: mixedbread-ai/mxbai-embed-large-v1
-  dims: [1024, 512, 256, 128, 64]
-  license: apache2
-  mrl_native: true
-  params_m: 335
-  mteb_avg: 64.7
-  released: "2024-Q1"
-  notes: "Largest model in roster. Highest raw MTEB. MRL trained. Trade-off: 335M params means slower encode. Use as quality ceiling reference."
-
-# ─── TIER 2: EFFICIENT SMALL MODELS ─────────────────────────────────────────
-
-bge_small:
-  hf_id: BAAI/bge-small-en-v1.5
-  dims: [384, 256, 128, 64]
-  license: mit
-  mrl_native: false
-  params_m: 33
-  mteb_avg: 62.0  # approximate
-  released: "2024-Q1"
-  notes: "Smallest production-grade model. MIT license. No MRL native — apply MatryoshkaLoss during fine-tuning to add MRL capability. Best efficiency story for 500M scale."
-
-bge_base:
-  hf_id: BAAI/bge-base-en-v1.5
-  dims: [768, 512, 256, 128, 64]
-  license: mit
-  mrl_native: false
-  params_m: 109
-  mteb_avg: 64.3
-  released: "2024-Q1"
-  notes: "MIT license. Solid retrieval baseline. No MRL native — add via fine-tuning."
+# ─── ZERO-SHOT ONLY (no fine-tuning) ─────────────────────────────────────────
 
 minilm_l6:
   hf_id: sentence-transformers/all-MiniLM-L6-v2
-  dims: [384, 256, 128]
-  license: apache2
-  mrl_native: false
   params_m: 22
-  mteb_avg: 56.3  # approximate
-  released: "2021"
-  notes: "Tiny. Fast. Weak on entity resolution tasks out of the box — include only as a floor baseline to show why fine-tuning matters."
-
-granite_embed_125m:
-  hf_id: ibm-granite/granite-embedding-125m-english
-  dims: [768]
+  dims: [384]
   license: apache2
   mrl_native: false
-  params_m: 125
-  mteb_avg: 61.0  # estimated
-  released: "2025-Q1"
-  notes: "NEW 2025. IBM Granite embedding series. No MRL native. Enterprise-grade quality control. Solid mid-size option. Also available: granite-embedding-30m-english (MIT, 30M params)."
+  role: floor_baseline
+  eval_mode: zero_shot
+  query_prefix: null
+  doc_prefix: null
+  pooling: mean
+  notes: "Absolute floor. Shows off-the-shelf small models fail at entity resolution. Zero-shot only."
 
-granite_embed_30m:
-  hf_id: ibm-granite/granite-embedding-30m-english
-  dims: [768]
+pplx_embed_v1_06b:
+  hf_id: perplexity-ai/pplx-embed-v1-0.6b
+  params_m: 600
+  dims: [1536, 768, 256, 128, 64]
+  license: apache2
+  mrl_native: true
+  role: sota_ceiling
+  eval_mode: zero_shot
+  architecture: decoder_only_qwen25
+  query_prefix: "query_system_prompt"  # uses separate system prompt for queries
+  doc_prefix: "doc_system_prompt"      # uses separate system prompt for docs
+  pooling: eos_token
+  mteb_retrieval_ndcg10: 62.41
+  mteb_overall: 70.0
+  context_length: 32768
+  released: "2026-03-06"
+  paper: "https://research.perplexity.ai/articles/pplx-embed-state-of-the-art-embedding-models-for-web-scale-retrieval"
+  notes: "SOTA <1B as of Mar 2026. #1 MTEB Retrieval <1B. Zero-shot only on M3 Pro. Decoder-only, EOS token pooling. SEPARATE system prompts for query vs doc — eval harness must handle this. Cosine similarity."
+
+# ─── FINE-TUNE TARGETS ────────────────────────────────────────────────────────
+
+bge_small:
+  hf_id: BAAI/bge-small-en-v1.5
+  params_m: 33
+  dims: [384, 256, 128, 64]
   license: mit
-  mrl_native: false
-  params_m: 30
-  mteb_avg: 58.0  # estimated
-  released: "2025-Q1"
-  notes: "MIT license. Smallest credible model in roster. Use as ultra-low-resource ablation point."
+  mrl_native: false  # add via MatryoshkaLoss during fine-tuning
+  role: efficiency_story
+  eval_mode: both  # zero-shot + fine-tuned
+  query_prefix: null
+  doc_prefix: null
+  pooling: cls
+  notes: "MIT license. 33M params. The narrative model — proves training data beats model size. Add MRL via MatryoshkaLoss(MNRL, dims=[384,256,128,64]) during fine-tune."
 
-# ─── EXCLUDED MODELS (documented for transparency) ───────────────────────────
+gte_modernbert_base:
+  hf_id: Alibaba-NLP/gte-modernbert-base
+  params_m: 149
+  dims: [768, 512, 256, 128, 64]
+  license: apache2
+  mrl_native: true
+  role: primary_result
+  eval_mode: both  # zero-shot + fine-tuned
+  query_prefix: null
+  doc_prefix: null
+  pooling: cls
+  mteb_retrieval_ndcg10: 66.4
+  released: "2025-01"
+  notes: "PRIMARY fine-tune target. Best MTEB/param 2025. ModernBERT backbone — RoPE, Flash Attention. MRL native. Strong short-text retrieval."
 
-# jina-embeddings-v3:
-#   hf_id: jinaai/jina-embeddings-v3
-#   params_m: 570, dims: 1024, MRL: yes
-#   EXCLUDED: CC BY-NC 4.0 license — not commercial-friendly
-#
-# perplexity-ai (embedding):
-#   STATUS CHANGED 2026-03: pplx-embed-v1 released with open weights and MIT license.
-#   See pplx_embed_v1_06b and pplx_embed_v1_4b entries in TIER 1 above.
-#   (Historical note: as of 2025-03, no open-source embedding model existed; only r1-1776 reasoning LM.)
-#
-# ColBERTv2:
-#   EXCLUDED from retrieval: token-level storage at 500M records = ~500TB. Re-ranker only.
-#
-# SPLADE v2:
-#   EXCLUDED from primary eval: 30K-dim sparse inverted index at 500M records is impractical on M3 Pro POC.
+nomic_v15:
+  hf_id: nomic-ai/nomic-embed-text-v1.5
+  params_m: 137
+  dims: [768, 512, 256, 128, 64]
+  license: apache2
+  mrl_native: true
+  role: mrl_reference
+  eval_mode: both  # zero-shot + fine-tuned
+  query_prefix: "search_query"   # REQUIRED at inference
+  doc_prefix: "search_document"  # REQUIRED at inference
+  pooling: mean
+  mteb_retrieval_ndcg10: 62.3
+  notes: "MRL baked in from training. CRITICAL: must prepend 'search_query: ' to queries and 'search_document: ' to docs at inference. Dropping prefix loses 3-5% recall. Eval harness must handle."
 
-# ─── FINE-TUNED VARIANTS (generated during experiments) ──────────────────────
+# ─── FINE-TUNING CONFIG ───────────────────────────────────────────────────────
 
-# These are created by the fine-tuning pipeline and saved to models/finetuned/
-# Naming convention: {base_model_key}_ft_{serialization_format}
-# e.g., nomic_v15_ft_pipe, gte_modernbert_base_ft_kv, bge_small_ft_pipe
+finetune_targets:
+  - bge_small
+  - gte_modernbert_base
+  - nomic_v15
 
-finetuned_variants:
-  base_models_to_finetune:
-    - gte_modernbert_base   # Primary: best 2025 model
-    - nomic_v15             # Primary: MRL reference
-    - bge_small             # Efficiency story (33M params)
-  serialization_formats:
-    - pipe    # "Jay Shah | Acme Corp | jay@acme.com | USA"
-    - kv      # "fn:Jay ln:Shah org:Acme Corp em:jay@acme.com co:USA"
-  matryoshka_dims: [768, 512, 256, 128, 64]
+zero_shot_only:
+  - minilm_l6
+  - pplx_embed_v1_06b
+
+serialization_formats:
+  - pipe    # "Jay Shah | Acme Corp | jay@acme.com | USA"
+  - kv      # "fn:Jay ln:Shah org:Acme Corp em:jay@acme.com co:USA"
+
+matryoshka_dims_finetune: [768, 512, 256, 128, 64]  # for gte/nomic
+matryoshka_dims_bge: [384, 256, 128, 64]             # for bge-small
