@@ -73,22 +73,31 @@ uv sync
 
 `uv sync` installs all deps from pyproject.toml and installs `src` as a package so imports work. Run all scripts with `uv run`:
 
+Steps 1-3 generate data. They must all complete before any eval or fine-tuning step.
+
 ```bash
-# 1. Generate 1.2M base profiles and split into index/triplets/eval (~20-30 min on M3 Pro)
+# 1. Generate 1.2M base profiles and split into index / triplets / eval (~20-30 min on M3 Pro)
+#    Outputs: data/processed/index.parquet, data/processed/triplet_source.parquet,
+#             data/eval/eval_profiles.parquet
 uv run python src/data/generate.py --config configs/dataset.yaml --output-dir data/
 
 # 2. Build training triplets from the 200K triplet_source split (~10-15 min)
+#    Outputs: data/triplets/triplets.parquet
 uv run python src/data/triplets.py \
     --config configs/dataset.yaml \
     --profiles data/processed/triplet_source.parquet \
     --output-dir data/triplets/
 
 # 3. Build eval query set -- 6 buckets x 10K = 60K queries (~2-3 min)
+#    Outputs: data/eval/eval_queries.parquet, data/eval/eval_queries_{bucket}.parquet
+#    REQUIRED before any eval script (run_bm25.py, run_eval.py)
 uv run python src/data/eval_set.py \
     --config configs/dataset.yaml \
     --eval-profiles data/eval/eval_profiles.parquet \
     --output-dir data/eval/
+```
 
+```bash
 # 4. Build BM25 index (~5-10 min for 1M records)
 uv run python src/eval/build_index.py \
     --model bm25_baseline \
