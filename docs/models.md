@@ -15,28 +15,69 @@ Complete analysis of all embedding models evaluated in this research. All select
 | nomic-embed-text-v1.5 | 137M | 768 | Apache | YES | 62.3 | 2024-02 | MRL baked in |
 | snowflake-arctic-embed-m-v1.5 | 109M | 768 | Apache | YES | 64.6 | 2024-Q4 | MRL is core design |
 | nomic-embed-text-v2-moe | 475M (137M active) | 768 | Apache | YES | ~63 | 2025-Q1 | MoE efficiency |
-| **gte-modernbert-base** | **149M** | **768** | **Apache** | **YES** | **66.4** | **2025-01** | **TOP PICK** |
-| mxbai-embed-large-v1 | 335M | 1024 | Apache | YES | 64.7 | 2024-Q1 | Quality ceiling |
+| **pplx-embed-v1-0.6b** | **600M** | **1024** | **MIT** | **YES** | **TBD (2026)** | **2026-03** | **NEW — diffusion Qwen3, native INT8/binary** |
+| **pplx-embed-v1-4b** | **4B** | **2560** | **MIT** | **YES** | **TBD (2026)** | **2026-03** | **NEW — quality ceiling** |
+| gte-modernbert-base | 149M | 768 | Apache | YES | 66.4 | 2025-01 | Strong 2025 pick, best MTEB/param |
+| mxbai-embed-large-v1 | 335M | 1024 | Apache | YES | 64.7 | 2024-Q1 | Quality ceiling (pre-2026) |
 
 ---
 
-## The Perplexity AI Situation
+## The Perplexity AI Situation — STATUS UPDATED 2026-03
 
-Jay mentioned Perplexity released an embedding model "last week." After a thorough research sweep:
+**UPDATE March 2026: Perplexity AI released pplx-embed-v1 — open weights, MIT license. See the new top section below.**
 
-**Perplexity AI has NOT released an open-source embedding model.**
+Historical context (as of 2025-03, before the release):
+- `perplexity-ai/r1-1776` on HuggingFace was a DeepSeek-R1 reasoning fine-tune (language model, MIT). NOT an embedding model.
+- Their Sonar API had a proprietary embedding endpoint with closed weights and no public specs.
 
-What they actually have:
-- `perplexity-ai/r1-1776` on HuggingFace — a DeepSeek-R1 reasoning fine-tune (language model, MIT, released Feb 2025). NOT an embedding model.
-- A proprietary embedding endpoint in their Sonar API, model internally referenced as "r-embed-v1" in some API examples. API-only, closed weights, no public specs for dimensions or architecture.
-
-**Verdict**: Excluded. Cannot download weights, cannot reproduce, cannot compare. If they open-source it later, add it to this roster.
+**Current verdict**: INCLUDED. pplx-embed-v1 is now the top-tier open-weight embedding model. See section below.
 
 ---
 
 ## Primary Candidates (Deep Dive)
 
-### gte-modernbert-base — TOP PICK
+### pplx-embed-v1 — THE 2026 TOP PICK
+**HuggingFace**: `perplexity-ai/pplx-embed-v1-0.6b` / `perplexity-ai/pplx-embed-v1-4b`
+**Released**: March 2026 by Perplexity AI
+**Params**: 600M (0.6B) or 4B | **Dims**: 1024 (0.6B) / 2560 (4B) | **License**: MIT
+**MRL Native**: Yes | **MTEB Avg**: TBD — see paper https://arxiv.org/abs/2602.11151
+
+**Architecture**: Bidirectional Qwen3 with diffusion continued pre-training — a genuinely novel approach. Unlike autoregressive models adapted for embedding (e5-mistral, NV-Embed), pplx-embed uses a diffusion objective during pre-training to learn bidirectional context natively, then trains as a standard embedding model. Result: strong semantic compression at a wide range of MRL dims.
+
+**Variants**:
+- `pplx-embed-v1-0.6b` — 600M params, 1024D native, MRL to 64D. Fine-tunable on M3 Pro.
+- `pplx-embed-v1-4b` — 4B params, 2560D native, MRL to 128D. Zero-shot eval only on M3 Pro.
+- `pplx-embed-context-v1-0.6b` / `pplx-embed-context-v1-4b` — RAG variants designed for chunks that arrive with surrounding document context. Not our primary use case (entity records are self-contained) but worth noting.
+
+**Key properties**:
+- MIT license — fully open weights, commercial-friendly, no use restrictions
+- MRL native across all checkpoints — all dim levels trained simultaneously, not post-hoc
+- Native INT8 and binary quantization — uniquely, the model outputs unnormalized int8 embeddings by default. Binary quantization also natively supported.
+- No instruction prefix needed — embed text directly. Unlike nomic (search_query:/search_document:) or e5 (query:/passage:), pplx-embed takes raw text. Removes a fragile pipeline dependency.
+- 32K context window — overkill for entity records (10–30 tokens), but means zero truncation risk
+- Multilingual
+- sentence-transformers compatible, ONNX export supported, TEI (v1.9.2+) compatible
+- API available at `api.perplexity.ai/v1/embeddings` if you want managed inference
+
+**CRITICAL — cosine similarity only**:
+The model natively produces UNNORMALIZED int8 embeddings. You CANNOT use dot product or L2 distance on these — the magnitudes are not normalized. You MUST use cosine similarity. This applies even when using the float32 outputs.
+
+**Why it matters for entity resolution specifically**:
+- Native quantization = zero post-processing for binary search. Sign-bit quantize the int8 output and you have binary vectors with no quality loss from a post-hoc step.
+- No instruction prefix = removes a fragile, easy-to-forget pipeline dependency. One less thing to get wrong between training and production.
+- 32K ctx = no field truncation, ever, on any plausible entity record format.
+- MRL lets you do 64D binary HNSW first-stage retrieval naturally — the 64D MRL subspace is trained, not a random projection.
+- 1024D (0.6B) at INT8 ≈ same storage as 768D FP32 for gte-modernbert. Better quality, same footprint.
+
+**For M3 Pro**:
+- 0.6B variant: fine-tunable with MNRL + MatryoshkaLoss, same pipeline as gte-modernbert-base
+- 4B variant: too large for fine-tuning on M3 Pro — zero-shot eval only. Use as absolute quality ceiling.
+
+**Context variants**: `pplx-embed-context-v1-*` accept a surrounding context string alongside the chunk being embedded. Not needed for entity resolution (records are self-contained) but document for completeness.
+
+---
+
+### gte-modernbert-base — STRONG 2025 PICK
 **HuggingFace**: `Alibaba-NLP/gte-modernbert-base`  
 **Released**: January 2025  
 **Params**: 149M | **Dims**: 768 | **License**: Apache 2.0  
@@ -135,8 +176,8 @@ Released Q1 2025. IBM's enterprise embedding series. No MRL native. Include gran
 ### Jina Embeddings v3
 **Why excluded**: CC BY-NC 4.0 license. Not commercial-friendly. Cannot include in a work research project.
 
-### Perplexity (any model)
-**Why excluded**: No open-source embedding model exists. See section above.
+### Perplexity (historical exclusion — NOW REVERSED)
+**Status as of 2026-03**: pplx-embed-v1 has been released with open weights and MIT license. It is now INCLUDED in Tier 1 — see the "pplx-embed-v1 — THE 2026 TOP PICK" section above. The original exclusion (no open-source model, API-only, closed weights) is no longer applicable.
 
 ### ColBERTv2
 **Why excluded from retrieval**: 128D per token × ~20 tokens/record × 500M records = ~500TB storage. Impractical. Keep as re-ranker discussion point only.

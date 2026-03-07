@@ -1,6 +1,6 @@
 # Model Registry for Entity Resolution POC
 # All models are Apache 2.0 or MIT licensed (open weights, commercial-friendly)
-# Last updated: 2025-03 based on research sweep
+# Last updated: 2026-03 — added pplx-embed-v1 (Perplexity AI, MIT, new top tier)
 
 # ─── BASELINES ───────────────────────────────────────────────────────────────
 
@@ -34,6 +34,42 @@ gte_modernbert_base:
   mteb_avg: 66.4
   released: "2025-01"
   notes: "NEW Jan 2025. ModernBERT backbone — RoPE, Flash Attention, 8192 ctx. Best MTEB/param tradeoff in 2025. Top pick for structured entity records. Strong short-text retrieval."
+
+pplx_embed_v1_06b:
+  hf_id: perplexity-ai/pplx-embed-v1-0.6b
+  dims: [1024, 512, 256, 128, 64]
+  license: mit
+  mrl_native: true
+  params_m: 600
+  mteb_avg: null  # check paper for actual score
+  released: "2026-03"
+  architecture: bidirectional_qwen3_diffusion
+  quantization_native: [int8, binary]
+  instruction_prefix_required: false
+  pooling: mean
+  context_length: 32768
+  multilingual: true
+  sentence_transformers: true
+  onnx: true
+  tei_compatible: true
+  api_endpoint: "api.perplexity.ai/v1/embeddings"
+  notes: "NEW Mar 2026. Diffusion pre-trained bidirectional Qwen3. MIT license. MRL native. Native INT8/binary quantization — use cosine similarity on UNNORMALIZED embeddings. No instruction prefix needed. Strongest open-weight embedding released in 2026. Also has pplx-embed-v1-4b (2560D) and context variants for RAG."
+
+pplx_embed_v1_4b:
+  hf_id: perplexity-ai/pplx-embed-v1-4b
+  dims: [2560, 1024, 512, 256, 128]
+  license: mit
+  mrl_native: true
+  params_m: 4000
+  mteb_avg: null
+  released: "2026-03"
+  architecture: bidirectional_qwen3_diffusion
+  quantization_native: [int8, binary]
+  instruction_prefix_required: false
+  pooling: mean
+  context_length: 32768
+  multilingual: true
+  notes: "4B variant. 2560D. Quality ceiling of the pplx-embed family. Too large for M3 Pro fine-tuning — zero-shot eval only."
 
 nomic_v2_moe:
   hf_id: nomic-ai/nomic-embed-text-v2-moe
@@ -126,9 +162,9 @@ granite_embed_30m:
 #   EXCLUDED: CC BY-NC 4.0 license — not commercial-friendly
 #
 # perplexity-ai (embedding):
-#   EXCLUDED: No open-source embedding model released as of 2025-03.
-#   Their HuggingFace org only has r1-1776 (a DeepSeek-R1 reasoning LM fine-tune, MIT).
-#   Embedding endpoint in their Sonar API is proprietary/closed. No open weights. No public specs.
+#   STATUS CHANGED 2026-03: pplx-embed-v1 released with open weights and MIT license.
+#   See pplx_embed_v1_06b and pplx_embed_v1_4b entries in TIER 1 above.
+#   (Historical note: as of 2025-03, no open-source embedding model existed; only r1-1776 reasoning LM.)
 #
 # ColBERTv2:
 #   EXCLUDED from retrieval: token-level storage at 500M records = ~500TB. Re-ranker only.
