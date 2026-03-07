@@ -25,6 +25,8 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+*.lance
+*.json
 
 # Virtual environments
 .env
