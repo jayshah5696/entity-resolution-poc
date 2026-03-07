@@ -33,7 +33,7 @@ models:
 index_sizes: [10_000, 100_000, 1_000_000]
 
 # ── Retrieval Parameters ──────────────────────────────────────────────────────
-top_k: [1, 5, 10]     # Report metrics at all three cutoffs per experiment
+top_k: [5, 10]        # Report metrics at k=5 and k=10
 
 # ── Metrics ────────────────────────────────────────────────────────────────────
 # All metrics computed per bucket, per top-K, per model.

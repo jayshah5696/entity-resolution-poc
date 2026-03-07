@@ -263,12 +263,10 @@ class TestNdcgAtK:
 
 class TestComputeMetrics:
     EXPECTED_KEYS = {
-        "recall_at_1",
         "recall_at_5",
         "recall_at_10",
         "precision_at_5",
         "mrr_at_10",
-        "ndcg_at_1",
         "ndcg_at_5",
         "ndcg_at_10",
     }
@@ -293,17 +291,16 @@ class TestComputeMetrics:
 
     def test_rank1_gives_all_ones(self):
         result = compute_metrics(RETRIEVED_R1, RELEVANT_ID)
-        assert result["recall_at_1"] == 1.0
         assert result["recall_at_5"] == 1.0
         assert result["recall_at_10"] == 1.0
         assert result["mrr_at_10"] == 1.0
-        assert abs(result["ndcg_at_1"] - 1.0) < 1e-9
+        assert abs(result["ndcg_at_5"] - 1.0) < 1e-9
         assert abs(result["ndcg_at_10"] - 1.0) < 1e-9
 
-    def test_rank2_recall_at_1_is_0(self):
+    def test_rank2_recall_at_5_is_1(self):
         result = compute_metrics(RETRIEVED_R2, RELEVANT_ID)
-        assert result["recall_at_1"] == 0.0
         assert result["recall_at_5"] == 1.0
+        assert result["recall_at_10"] == 1.0
 
     def test_custom_ks(self):
         result = compute_metrics(RETRIEVED_R1, RELEVANT_ID, ks=[1, 3])

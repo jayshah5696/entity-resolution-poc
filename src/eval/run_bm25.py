@@ -77,7 +77,7 @@ def _eval_one(
     retrieved_ids: list[str],
     top_k: int,
 ) -> dict:
-    return compute_metrics(retrieved_ids, ground_truth_id, ks=[1, 5, 10])
+    return compute_metrics(retrieved_ids, ground_truth_id, ks=[5, 10])
 
 
 # ---------------------------------------------------------------------------

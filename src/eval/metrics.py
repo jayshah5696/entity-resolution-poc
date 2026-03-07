@@ -101,7 +101,7 @@ def compute_metrics(
         ndcg_at_1, ndcg_at_5, ndcg_at_10
     """
     if ks is None:
-        ks = [1, 5, 10]
+        ks = [5, 10]
 
     result: dict[str, float] = {}
 

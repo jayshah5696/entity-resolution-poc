@@ -176,18 +176,20 @@ def build_bm25_index(
     output_dir.mkdir(parents=True, exist_ok=True)
     db = lancedb.connect(str(output_dir))
 
-    # Write docs in batches
+    # Write docs in batches -- LanceDB requires list of dicts or DataFrame
+    import pandas as pd
+
     write_batch = 50_000
     table = None
     for i in tqdm(range(0, len(texts), write_batch), desc="Writing to LanceDB"):
-        batch = {
+        df_batch = pd.DataFrame({
             "entity_id": entity_ids[i : i + write_batch],
             "text": texts[i : i + write_batch],
-        }
+        })
         if table is None:
-            table = db.create_table("index", data=batch, mode="overwrite")
+            table = db.create_table("index", data=df_batch, mode="overwrite")
         else:
-            table.add(batch)
+            table.add(df_batch)
 
     if table is None:
         raise RuntimeError("No documents to index.")
