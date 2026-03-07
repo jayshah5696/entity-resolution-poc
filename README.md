@@ -138,26 +138,26 @@ uv run python src/eval/run_eval.py \
 # 8. Fine-tune all 5 models in parallel on Modal A10G (~60 min, ~$5-7 total)
 #
 #    One-time setup (do once):
-#      uv run python3 -m modal secret create huggingface HF_TOKEN=<your_hf_token>
-#      uv run python3 -m modal secret create wandb WANDB_API_KEY=<your_wandb_key>
+#      modal secret create huggingface HF_TOKEN=<your_hf_token>
+#      modal secret create wandb WANDB_API_KEY=<your_wandb_key>
 #
 #    One-time data upload to HF Hub (runs locally on M3, no Modal):
-#      export HF_HUB_DISABLE_XET=1   # disable XetHub chunked upload -- use standard LFS
+#      export HF_HUB_DISABLE_XET=1   # required -- disables XetHub, uses standard LFS
 #      hf auth login
 #      hf upload jayshah5696/entity-resolution-triplets \
 #          data/triplets/triplets.parquet triplets.parquet --repo-type dataset
 #      # Creates: https://huggingface.co/datasets/jayshah5696/entity-resolution-triplets
 #
 #    Launch all 5 jobs in parallel:
-uv run python3 -m modal run src/models/finetune_modal.py::run_all
+modal run src/models/finetune_modal.py::run_all
 #    Monitor: https://wandb.ai/jayshah5696/entity-resolution-poc
 #    Models pushed to: https://huggingface.co/jayshah5696
 #
 #    Single model (debug or re-run one):
-#      uv run python3 -m modal run src/models/finetune_modal.py::finetune_one --model-key gte_modernbert_base
+#      modal run src/models/finetune_modal.py::finetune_one --model-key gte_modernbert_base
 #
 #    Resume a crashed run (picks up from last checkpoint):
-#      uv run python3 -m modal run src/models/finetune_modal.py::finetune_one --model-key gte_modernbert_base --resume
+#      modal run src/models/finetune_modal.py::finetune_one --model-key gte_modernbert_base --resume
 #
 #    Local M3 fallback (slow, ~15h per model -- only if Modal unavailable):
 #      uv run python src/models/finetune.py \
