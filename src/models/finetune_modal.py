@@ -65,8 +65,10 @@ image = (
         "tqdm>=4.66",
     )
     .run_commands(
-        # flash-attn pinned to match torch 2.3.1 -- compile once, cached forever
-        "pip install flash-attn --no-build-isolation"  # let pip resolve version compatible with torch 2.3.1
+        # Pre-built wheel for cu121 + torch2.3 + Python 3.10 (matches base image exactly).
+        # Much faster than compiling (~30s vs ~20min). v2.5.9.post1 is latest with torch2.3 support.
+        # Wheel list: https://github.com/Dao-AILab/flash-attention/releases/tag/v2.5.9.post1
+        "pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.5.9.post1/flash_attn-2.5.9.post1+cu121torch2.3cxx11abiFALSE-cp310-cp310-linux_x86_64.whl"
     )
 )
 
