@@ -67,6 +67,7 @@ def search_batch(table, query_vecs: np.ndarray, top_k: int) -> list[list[str]]:
         result_df = (
             table.search(vec.tolist())
             .limit(top_k)
+            .disable_scoring_autoprojection()
             .select(["entity_id"])
             .to_pandas()
         )
@@ -79,6 +80,7 @@ def search_single(table, query_vec: np.ndarray, top_k: int) -> list[str]:
     result_df = (
         table.search(query_vec.tolist())
         .limit(top_k)
+        .disable_scoring_autoprojection()
         .select(["entity_id"])
         .to_pandas()
     )
