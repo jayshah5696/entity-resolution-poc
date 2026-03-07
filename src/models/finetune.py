@@ -371,7 +371,6 @@ def main() -> None:
         seed=seed,
         fp16=False,
         bf16=False,
-        use_mps_device=use_mps,
         dataloader_num_workers=dataloader_num_workers if not use_mps else 0,
         dataloader_pin_memory=False,  # Disable for MPS compatibility
         gradient_accumulation_steps=gradient_accumulation_steps,
