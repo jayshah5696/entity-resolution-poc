@@ -135,19 +135,20 @@ uv run python src/eval/run_eval.py \
     --serialization pipe \
     --experiment-id 004
 
-# 8. Fine-tune all 3 models in parallel on Modal A10G (~40 min, ~$3 total)
+# 8. Fine-tune all 5 models in parallel on Modal A10G (~60 min, ~$5-7 total)
 #
 #    One-time setup (do once):
 #      modal secret create huggingface HF_TOKEN=<your_hf_token>
 #      modal secret create wandb WANDB_API_KEY=<your_wandb_key>
 #
-#    One-time data upload to HF Hub (runs locally, no Modal):
-#      huggingface-cli login
-#      huggingface-cli upload jayshah5696/entity-resolution-triplets \
+#    One-time data upload to HF Hub (runs locally on M3, no Modal):
+#      export HF_HUB_DISABLE_XET=1   # required -- disables XetHub, uses standard LFS
+#      hf auth login
+#      hf upload jayshah5696/entity-resolution-triplets \
 #          data/triplets/triplets.parquet triplets.parquet --repo-type dataset
 #      # Creates: https://huggingface.co/datasets/jayshah5696/entity-resolution-triplets
 #
-#    Launch all 3 jobs in parallel (bge_small, gte_modernbert_base, nomic_v15):
+#    Launch all 5 jobs in parallel:
 modal run src/models/finetune_modal.py::run_all
 #    Monitor: https://wandb.ai/jayshah5696/entity-resolution-poc
 #    Models pushed to: https://huggingface.co/jayshah5696

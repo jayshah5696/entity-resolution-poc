@@ -3,7 +3,7 @@ name = "entity-resolution-poc"
 version = "0.1.0"
 description = "Research POC: beating BM25 at people-entity resolution with fine-tuned Matryoshka embeddings at 500M scale"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12,<3.13"
 authors = [
     { name = "jayshah5696", email = "jayshah5696@gmail.com" }
 ]
@@ -11,8 +11,8 @@ license = { text = "MIT" }
 
 dependencies = [
     "faker>=24.0",
-    "sentence-transformers>=3.0",
-    "accelerate>=1.1.0",
+    "sentence-transformers>=3.3",
+    "accelerate>=1.2.0",
     "faiss-cpu>=1.8",
     "rank-bm25>=0.2",
     "datasets>=2.18",

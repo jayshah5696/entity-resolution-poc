@@ -178,6 +178,8 @@ def finetune_one(model_key: str, resume: bool = False) -> dict:
     cfg = MODELS[model_key]
     ft = FINETUNE_CFG
     hf_token = os.environ["HF_TOKEN"]
+    # Disable XetHub -- use standard LFS upload path inside Modal container
+    os.environ["HF_HUB_DISABLE_XET"] = "1"
 
     hf_output_repo = f"{HF_MODEL_PREFIX}-{model_key.replace('_', '-')}-pipe-ft"
     checkpoint_dir = CHECKPOINT_ROOT / model_key
@@ -457,7 +459,7 @@ def run_all():
 # Data upload: DO NOT use Modal for this.
 # Just run directly on your M3:
 #
-#   huggingface-cli upload jayshah5696/entity-resolution-triplets \
+#   hf upload jayshah5696/entity-resolution-triplets \
 #       data/triplets/triplets.parquet triplets.parquet --repo-type dataset
 #
 # Or use the standalone script:

@@ -4,13 +4,19 @@ upload_triplets.py -- Upload triplets to HuggingFace Hub directly (no Modal).
 Usage (from repo root):
     python src/models/upload_triplets.py
 
-Or just use HF CLI directly:
-    huggingface-cli upload jayshah5696/entity-resolution-triplets \
+Or use hf CLI directly (2026 standard):
+    hf auth login
+    hf upload jayshah5696/entity-resolution-triplets \
         data/triplets/triplets.parquet triplets.parquet --repo-type dataset
 """
 
+import os
 import sys
 from pathlib import Path
+
+# Disable XetHub chunked upload -- use standard LFS. Required when hf_xet not installed.
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+
 from huggingface_hub import HfApi
 
 TRIPLETS_PATH = "data/triplets/triplets.parquet"
@@ -24,7 +30,7 @@ if not path.exists():
 size_mb = path.stat().st_size / 1024 / 1024
 print(f"Uploading {TRIPLETS_PATH} ({size_mb:.1f} MB) -> {HF_DATASET_REPO}")
 
-api = HfApi()  # uses cached token from huggingface-cli login
+api = HfApi()  # uses cached token from: hf auth login
 api.create_repo(repo_id=HF_DATASET_REPO, repo_type="dataset", exist_ok=True, private=False)
 api.upload_file(
     path_or_fileobj=TRIPLETS_PATH,
