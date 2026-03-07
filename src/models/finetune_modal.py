@@ -82,6 +82,14 @@ app = modal.App(APP_NAME, image=image)
 # ---------------------------------------------------------------------------
 
 MODELS = {
+    "minilm_l6": {
+        "hf_id": "sentence-transformers/all-MiniLM-L6-v2",
+        "dims": [384, 256, 128, 64],
+        "mrl_native": False,
+        "trust_remote_code": False,
+        "query_prefix": None,
+        "doc_prefix": None,
+    },
     "bge_small": {
         "hf_id": "BAAI/bge-small-en-v1.5",
         "dims": [384, 256, 128, 64],
@@ -103,8 +111,16 @@ MODELS = {
         "dims": [768, 512, 256, 128, 64],
         "mrl_native": True,
         "trust_remote_code": True,
-        "query_prefix": "search_query",   # REQUIRED: prepend to anchors
-        "doc_prefix": "search_document",  # REQUIRED: prepend to pos/neg
+        "query_prefix": "search_query",
+        "doc_prefix": "search_document",
+    },
+    "pplx_embed_v1_06b": {
+        "hf_id": "perplexity-ai/pplx-embed-v1-0.6b",
+        "dims": [1536, 768, 256, 128, 64],
+        "mrl_native": True,
+        "trust_remote_code": True,
+        "query_prefix": None,  # system prompts not used during training
+        "doc_prefix": None,
     },
 }
 
@@ -130,14 +146,14 @@ FINETUNE_CFG = {
 # ---------------------------------------------------------------------------
 
 @app.function(
-    gpu=GPU,
+    gpu=modal.gpu.A10G(),  # default; pplx gets A100 via per-call override below
     timeout=TIMEOUT,
     volumes={str(CHECKPOINT_ROOT): volume},
     secrets=[
         modal.Secret.from_name("huggingface"),
         modal.Secret.from_name("wandb"),
     ],
-    retries=1,  # Auto-retry once on transient failure
+    retries=1,
 )
 def finetune_one(model_key: str, resume: bool = False) -> dict:
     """
@@ -289,7 +305,10 @@ def finetune_one(model_key: str, resume: bool = False) -> dict:
 
     # ---- Training args ----
     epochs = ft["epochs"]
-    batch_size = ft["batch_size"]
+    # pplx is 600M params -- reduce batch to fit A10G 24GB with fp16
+    batch_size = 64 if model_key == "pplx_embed_v1_06b" else ft["batch_size"]
+    grad_accum = 4 if model_key == "pplx_embed_v1_06b" else ft["gradient_accumulation_steps"]
+    # effective batch stays 256 for pplx (64 * 4)
     steps_per_epoch = len(train_dataset) // batch_size
     total_steps = steps_per_epoch * epochs
     warmup_steps = max(1, int(total_steps * ft["warmup_ratio"]))
@@ -317,7 +336,7 @@ def finetune_one(model_key: str, resume: bool = False) -> dict:
         bf16=False,
         dataloader_num_workers=ft["dataloader_num_workers"],
         dataloader_pin_memory=True,
-        gradient_accumulation_steps=ft["gradient_accumulation_steps"],
+        gradient_accumulation_steps=grad_accum,
         gradient_checkpointing=False,
         report_to=["wandb"],
         load_best_model_at_end=False,
@@ -401,21 +420,30 @@ def finetune_one(model_key: str, resume: bool = False) -> dict:
 
 @app.local_entrypoint()
 def run_all():
-    """Launch all 3 models in parallel on Modal."""
-    import json
+    """Launch all 5 models in parallel on Modal.
+
+    GPU allocation:
+      minilm_l6            -> A10G (22M params,  fast ~5min)
+      bge_small            -> A10G (33M params,  fast ~10min)
+      gte_modernbert_base  -> A10G (149M params, ~25min)
+      nomic_v15            -> A10G (137M params, ~25min)
+      pplx_embed_v1_06b   -> A10G (600M params, ~60min, fp16 batch=64)
+
+    All 5 run simultaneously. Total wall time ~ 60min. Cost ~$5-7.
+    """
     targets = list(MODELS.keys())
     print(f"Launching {len(targets)} parallel fine-tune jobs: {targets}")
-    print(f"GPU: {GPU} | W&B project: {WANDB_PROJECT} | HF prefix: {HF_MODEL_PREFIX}")
+    print(f"W&B project: {WANDB_PROJECT} | HF prefix: {HF_MODEL_PREFIX}")
     print("Monitor at: https://wandb.ai/jayshah5696/entity-resolution-poc")
     print()
 
-    # starmap launches all 3 simultaneously
+    # starmap launches all 5 simultaneously
     results = list(finetune_one.starmap(
         [(key, False) for key in targets]
     ))
 
     print("\n" + "=" * 60)
-    print("ALL RUNS COMPLETE")
+    print("ALL 5 RUNS COMPLETE")
     print("=" * 60)
     for r in results:
         print(f"  {r['model_key']:30s} -> {r['hf_url']}")
