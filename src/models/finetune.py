@@ -358,12 +358,15 @@ def main() -> None:
 
     # MPS-specific settings: no fp16/bf16 (not supported on MPS via Trainer)
     use_mps = args.device == "mps"
+    steps_per_epoch = len(train_dataset) // batch_size
+    total_steps = steps_per_epoch * epochs
+    warmup_steps = max(1, int(total_steps * warmup_ratio))
     train_args = SentenceTransformerTrainingArguments(
         output_dir=str(output_dir),
         num_train_epochs=epochs,
         per_device_train_batch_size=batch_size,
         learning_rate=learning_rate,
-        warmup_ratio=warmup_ratio,
+        warmup_steps=warmup_steps,
         weight_decay=weight_decay,
         logging_steps=logging_steps,
         save_steps=save_steps,
