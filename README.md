@@ -88,9 +88,54 @@ uv run python src/data/eval_set.py \
     --config configs/dataset.yaml \
     --eval-profiles data/eval/eval_profiles.parquet \
     --output-dir data/eval/
-```
 
-BM25 baseline + eval harness, fine-tuning, and results aggregation scripts are next (in progress).
+# 4. Build BM25 index (~5-10 min for 1M records)
+uv run python src/eval/build_index.py \
+    --model bm25_baseline \
+    --serialization pipe \
+    --index-profiles data/processed/index.parquet \
+    --output-dir results/indexes/bm25_pipe \
+    --models-config configs/models.yaml
+
+# 5. Run BM25 eval (all 6 buckets)
+uv run python src/eval/run_bm25.py \
+    --index-dir results/indexes/bm25_pipe \
+    --eval-queries data/eval/eval_queries.parquet \
+    --output results/001_bm25_pipe.json \
+    --serialization pipe \
+    --experiment-id 001
+
+# 6. Build dense embedding index (~10-30 min per model)
+uv run python src/eval/build_index.py \
+    --model gte_modernbert_base \
+    --serialization pipe \
+    --quantization fp32 \
+    --index-profiles data/processed/index.parquet \
+    --output-dir results/indexes/gte_modernbert_base_pipe_fp32 \
+    --device mps
+
+# 7. Run dense model eval
+uv run python src/eval/run_eval.py \
+    --model gte_modernbert_base \
+    --index-dir results/indexes/gte_modernbert_base_pipe_fp32 \
+    --eval-queries data/eval/eval_queries.parquet \
+    --output results/004_gte_modernbert_pipe_fp32.json \
+    --serialization pipe \
+    --experiment-id 004
+
+# 8. Fine-tune a model (4-6h on M3 Pro, run overnight)
+uv run python src/models/finetune.py \
+    --model gte_modernbert_base \
+    --serialization pipe \
+    --triplets data/triplets/triplets.parquet \
+    --output-dir models/gte_modernbert_base_pipe_ft
+
+# 9. Aggregate all results into CSV + Markdown report
+uv run python src/eval/aggregate.py \
+    --results-dir results/ \
+    --output-csv results/master_results.csv \
+    --output-report results/report.md
+```
 
 Tests:
 
