@@ -1,0 +1,39 @@
+{
+  "experiment_id": "006",
+  "name": "Binary Two-Stage Retrieval",
+  "description": "Two-stage retrieval: Stage 1 = binary 64-dim HNSW (4GB index for 500M records), Stage 2 = FP32 768-dim re-rank of top-100 candidates. Uses fine-tuned nomic-embed-v1.5 (pipe format) from experiment 003. Tests hypothesis H2: binary ANN + re-rank achieves 95%+ of full-precision recall.",
+  "dataset_version": "v1",
+  "model": "nomic_v15_finetuned_pipe",
+  "model_path": "models/nomic_v15_pipe_ep3_bs256/",
+  "serialization": "pipe",
+  "index_size": 1000000,
+  "stage1": {
+    "index_type": "binary_hnsw",
+    "embedding_dims": 64,
+    "quantization": "binary",
+    "top_k_candidates": 100,
+    "hnsw_M": 32,
+    "hnsw_efConstruction": 200,
+    "hnsw_efSearch": 100
+  },
+  "stage2": {
+    "embedding_dims": 768,
+    "quantization": "fp32",
+    "metric": "cosine",
+    "top_k": [1, 5, 10]
+  },
+  "eval_buckets": [
+    "pristine",
+    "missing_firstname",
+    "missing_email_company",
+    "typo_name",
+    "domain_mismatch",
+    "swapped_attributes"
+  ],
+  "requires_trust_remote_code": true,
+  "status": "pending",
+  "created": "2025-01-01",
+  "updated": null,
+  "result_file": null,
+  "notes": "The production architecture experiment. Compare to exp 003 (full precision single-stage) to measure the quality cost of binary Stage 1 + re-rank. Target: < 5pp quality loss, >30x memory savings."
+}

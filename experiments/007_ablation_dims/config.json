@@ -1,0 +1,31 @@
+{
+  "experiment_id": "007",
+  "name": "Ablation: MRL Dimensionality",
+  "description": "Systematic evaluation of all MRL sub-dims for the fine-tuned nomic-embed-v1.5 model (pipe format). Tests all 5 dims: [768, 512, 256, 128, 64] in fp32 and binary quantization. Answers: where is the quality-vs-memory knee in the curve?",
+  "dataset_version": "v1",
+  "model": "nomic_v15_finetuned_pipe",
+  "model_path": "models/nomic_v15_pipe_ep3_bs256/",
+  "serialization": "pipe",
+  "index_size": 1000000,
+  "ablation_dims": [768, 512, 256, 128, 64],
+  "ablation_quantizations": ["fp32", "binary"],
+  "index_type": "hnsw",
+  "hnsw_M": 32,
+  "hnsw_efConstruction": 200,
+  "hnsw_efSearch": 100,
+  "top_k": [1, 5, 10],
+  "eval_buckets": [
+    "pristine",
+    "missing_firstname",
+    "missing_email_company",
+    "typo_name",
+    "domain_mismatch",
+    "swapped_attributes"
+  ],
+  "requires_trust_remote_code": true,
+  "status": "pending",
+  "created": "2025-01-01",
+  "updated": null,
+  "result_file": null,
+  "notes": "Run after exp 003. Iterates through dims x quantizations. Total 10 sub-experiments (5 dims × 2 quantizations). Results feed directly into production architecture decision. Look for the elbow: highest quality/memory ratio."
+}

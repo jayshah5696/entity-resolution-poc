@@ -1,0 +1,176 @@
+# Model Registry
+# All models to evaluate in this research project.
+# Add new models here; all eval scripts read from this registry.
+# Fields: hf_id, type, dims, license, mrl_native, params_m, notes
+
+# ── Baseline ───────────────────────────────────────────────────────────────────
+bm25_baseline:
+  type: bm25
+  library: rank_bm25
+  algorithm: BM25Okapi
+  k1: 1.5
+  b: 0.75
+  dims: null        # Not applicable — no embedding
+  mrl_native: false
+  params_m: null
+  license: mit      # rank_bm25 library license
+  notes: >
+    Strong lexical baseline. Term-frequency + IDF weighting on tokenized records.
+    Expected to perform well on pristine records with exact token matches.
+    Expected to fail on corrupted/partial records where token overlap drops.
+    This is the baseline we aim to beat with dense retrieval.
+
+# ── Dense Embedding Models ─────────────────────────────────────────────────────
+
+nomic_v15:
+  hf_id: nomic-ai/nomic-embed-text-v1.5
+  type: embedding
+  architecture: ModernBERT-style encoder
+  dims: [768, 512, 256, 128, 64]   # MRL — all dims usable
+  license: apache2
+  mrl_native: true
+  params_m: 137
+  max_seq_len: 8192
+  matryoshka_dims: [768, 512, 256, 128, 64]
+  mteb_score: 62.28   # MTEB English average (v1.5)
+  notes: >
+    Primary fine-tuning target. Native MRL support means no additional MRL
+    training overhead — the base checkpoint already produces useful sub-vectors.
+    Long context window (8192 tokens) is overkill for our 5-field records but
+    ensures no truncation issues. Apache2 license allows commercial use.
+    Expected to be the strongest performer after domain fine-tuning.
+  requires_trust_remote_code: true
+
+bge_small:
+  hf_id: BAAI/bge-small-en-v1.5
+  type: embedding
+  architecture: BERT-small encoder
+  dims: [384, 256, 128, 64]   # MRL applied via fine-tuning (not native)
+  license: mit
+  mrl_native: false
+  params_m: 33
+  max_seq_len: 512
+  matryoshka_dims: null  # Will be applied via SentenceTransformers MRL wrapper
+  mteb_score: 51.68
+  notes: >
+    Smallest serious model in the roster. 33M params makes it fast to fine-tune
+    and fast at inference. Useful as a latency-optimized option if quality is
+    acceptable. MRL not native — would need MRL wrapper applied during fine-tuning.
+    Included as a speed/quality tradeoff data point.
+  requires_trust_remote_code: false
+
+bge_base:
+  hf_id: BAAI/bge-base-en-v1.5
+  type: embedding
+  architecture: BERT-base encoder
+  dims: [768, 512, 256, 128, 64]
+  license: mit
+  mrl_native: false
+  params_m: 109
+  max_seq_len: 512
+  matryoshka_dims: null
+  mteb_score: 53.25
+  notes: >
+    Mid-size model with good MTEB scores relative to parameter count. Does not
+    have native MRL — would need MRL wrapper. Included as a competitor to
+    nomic_v15 at approximately the same parameter count (109M vs 137M).
+    MIT license is more permissive than Apache2 in some readings.
+  requires_trust_remote_code: false
+
+mxbai_large:
+  hf_id: mixedbread-ai/mxbai-embed-large-v1
+  type: embedding
+  architecture: RoBERTa-large encoder
+  dims: [1024, 512, 256, 128, 64]
+  license: apache2
+  mrl_native: true
+  params_m: 335
+  max_seq_len: 512
+  matryoshka_dims: [1024, 512, 256, 128, 64]
+  mteb_score: 64.68
+  notes: >
+    Largest model in the roster. Strongest MTEB scores. At 335M params,
+    fine-tuning is expensive on MPS hardware (batch size will need to be
+    reduced). Native MRL support is a plus. Included to establish a quality
+    ceiling — if fine-tuned nomic_v15 (137M) matches this, we have a strong
+    efficiency story. May be too slow for production inference at 500M scale.
+  requires_trust_remote_code: false
+
+minilm_l6:
+  hf_id: sentence-transformers/all-MiniLM-L6-v2
+  type: embedding
+  architecture: MiniLM-L6 encoder
+  dims: [384, 256, 128]
+  license: apache2
+  mrl_native: false
+  params_m: 22
+  max_seq_len: 256
+  matryoshka_dims: null
+  mteb_score: 44.54
+  notes: >
+    The ubiquitous lightweight baseline. Very fast, very small, well-studied.
+    Included as a lower-bound reference — if we can't beat MiniLM-L6 on a
+    specialized task after fine-tuning a larger model, something is wrong.
+    Small max_seq_len (256) is fine for our short records.
+  requires_trust_remote_code: false
+
+gte_modernbert:
+  hf_id: Alibaba-NLP/gte-modernbert-base
+  type: embedding
+  architecture: ModernBERT encoder
+  dims: [768, 512, 256, 128, 64]
+  license: apache2
+  mrl_native: true
+  params_m: 149
+  max_seq_len: 8192
+  matryoshka_dims: [768, 512, 256, 128, 64]
+  mteb_score: 63.48
+  notes: >
+    ModernBERT-based architecture — same generation as nomic_v15. Strong MTEB
+    scores, native MRL, long context. Good direct comparison to nomic_v15 as
+    both use similar architectures. May perform slightly better on structured
+    records due to architectural differences in attention patterns.
+  requires_trust_remote_code: false
+
+arctic_embed_m:
+  hf_id: Snowflake/snowflake-arctic-embed-m-v1.5
+  type: embedding
+  architecture: BERT-based encoder (Snowflake fine-tuned)
+  dims: [768, 512, 256, 128, 64]
+  license: apache2
+  mrl_native: true
+  params_m: 109
+  max_seq_len: 512
+  matryoshka_dims: [768, 512, 256, 128, 64]
+  mteb_score: 57.24
+  notes: >
+    Snowflake's production embedding model, explicitly trained for retrieval
+    and MRL. Interesting data point as it comes from a data platform company
+    (Snowflake) — they may have seen similar structured-data retrieval problems
+    internally. Native MRL support.
+  requires_trust_remote_code: false
+
+# ── Fine-tuned Variants (populated after training) ─────────────────────────────
+# These entries are added after fine-tuning completes.
+
+nomic_v15_finetuned_pipe:
+  hf_id: null  # local path: models/nomic_v15_finetuned_pipe/
+  type: embedding
+  base_model: nomic-ai/nomic-embed-text-v1.5
+  serialization: pipe
+  dims: [768, 512, 256, 128, 64]
+  license: apache2
+  mrl_native: true
+  params_m: 137
+  status: not_trained
+
+nomic_v15_finetuned_kv:
+  hf_id: null  # local path: models/nomic_v15_finetuned_kv/
+  type: embedding
+  base_model: nomic-ai/nomic-embed-text-v1.5
+  serialization: keyvalue
+  dims: [768, 512, 256, 128, 64]
+  license: apache2
+  mrl_native: true
+  params_m: 137
+  status: not_trained

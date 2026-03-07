@@ -1,0 +1,28 @@
+{
+  "experiment_id": "001",
+  "name": "BM25 Baseline",
+  "description": "Standard BM25 on pipe-serialized records using rank_bm25. This is the primary baseline all dense models must beat. Uses BM25Okapi with k1=1.5, b=0.75, whitespace+lowercase tokenization.",
+  "dataset_version": "v1",
+  "model": "bm25",
+  "model_config": "configs/models.yaml#bm25_baseline",
+  "serialization": "pipe",
+  "index_size": 1000000,
+  "bm25_k1": 1.5,
+  "bm25_b": 0.75,
+  "bm25_algorithm": "BM25Okapi",
+  "tokenization": "whitespace_lower",
+  "top_k": [1, 5, 10],
+  "eval_buckets": [
+    "pristine",
+    "missing_firstname",
+    "missing_email_company",
+    "typo_name",
+    "domain_mismatch",
+    "swapped_attributes"
+  ],
+  "status": "pending",
+  "created": "2025-01-01",
+  "updated": null,
+  "result_file": null,
+  "notes": "Run this first. Results define the baseline delta for all subsequent experiments."
+}

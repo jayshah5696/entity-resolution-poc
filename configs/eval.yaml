@@ -1,0 +1,120 @@
+# Evaluation Configuration
+# Controls all aspects of the retrieval evaluation harness.
+# All eval scripts read from this file.
+
+# ── Index Sizes ────────────────────────────────────────────────────────────────
+# Evaluate at multiple scales to understand how performance degrades with index size.
+# 10K = smoke test / fast iteration
+# 100K = medium scale
+# 1M = primary evaluation scale
+index_sizes: [10_000, 100_000, 1_000_000]
+
+# ── Retrieval Parameters ──────────────────────────────────────────────────────
+top_k: [1, 5, 10]     # Report metrics at all three cutoffs per experiment
+
+# ── Metrics ────────────────────────────────────────────────────────────────────
+# All metrics computed per bucket, per top-K, per model.
+metrics:
+  - recall_at_k       # Primary metric: is the true match in the top-K results?
+  - precision_at_k    # How many of top-K results are relevant? (1 true match → binary)
+  - mrr_at_k          # Mean Reciprocal Rank: rewards finding the match higher in ranking
+  - ndcg_at_k         # NDCG: normalized discounted cumulative gain (graded relevance)
+
+# ── Quantization Modes ─────────────────────────────────────────────────────────
+# Test different index quantization strategies for memory/quality tradeoffs.
+quantization_modes:
+  - fp32       # Full precision — quality ceiling, memory upper bound
+  - int8       # 8-bit integer quantization — 4x memory reduction
+  - binary     # Binary quantization — 32x memory reduction (used in Stage 1)
+
+# ── Latency Measurement ────────────────────────────────────────────────────────
+latency_percentiles: [50, 95, 99]   # Report p50, p95, p99 query latency in ms
+latency_n_queries: 1000             # Number of queries to measure (after warmup)
+latency_warmup_queries: 100         # Warmup queries (results discarded)
+latency_batch_size: 1               # Single-query latency (not batch throughput)
+
+# ── Evaluation Buckets ─────────────────────────────────────────────────────────
+# Must match eval_buckets in dataset.yaml
+buckets:
+  - pristine
+  - missing_firstname
+  - missing_email_company
+  - typo_name
+  - domain_mismatch
+  - swapped_attributes
+
+# ── FAISS HNSW Index Parameters ───────────────────────────────────────────────
+# HNSW (Hierarchical Navigable Small World) for approximate nearest neighbor search
+faiss_hnsw:
+  M: 32                  # Number of connections per node (higher = better recall, more RAM)
+  efConstruction: 200    # Search depth during index construction (higher = better quality)
+  efSearch: 100          # Search depth at query time (higher = better recall, slower)
+  metric: inner_product  # IP for cosine similarity (with normalized embeddings)
+
+# FAISS flat (exact) index — used for quality ceiling measurements
+faiss_flat:
+  metric: inner_product
+
+# Binary index (for Stage 1)
+faiss_binary:
+  index_type: BinaryIVF  # Or BinaryFlat for small indices
+  nlist: 1000            # Number of IVF cells (for BinaryIVF)
+  nprobe: 50             # Cells to search at query time
+
+# ── BM25 Parameters ────────────────────────────────────────────────────────────
+bm25:
+  k1: 1.5              # Term frequency saturation parameter
+  b: 0.75              # Length normalization parameter
+  algorithm: BM25Okapi # Options: BM25Okapi, BM25Plus, BM25L
+  tokenization: whitespace_lower  # Lowercase + split on whitespace
+  # Note: simple whitespace tokenization preserves email structure (dots, @)
+  # which is important for this schema
+
+# ── Two-Stage Retrieval ────────────────────────────────────────────────────────
+two_stage:
+  stage1_index: binary_hnsw  # ANN index type for Stage 1 retrieval
+  stage1_dims: 64            # Embedding dimensions for Stage 1
+  stage1_top_k: 100          # Candidates passed to Stage 2 re-ranking
+  stage2_dims: 768           # Full precision dims for Stage 2
+  stage2_metric: cosine      # Re-ranking metric
+
+# ── Result Storage ─────────────────────────────────────────────────────────────
+results_dir: results/
+master_csv: results/master_results.csv
+
+# Individual result file naming: results/exp_{experiment_id}_{model}_{serialization}_{dims}_{index_size}.json
+result_filename_pattern: "exp_{experiment_id}_{model}_{serialization}_{dims}_{index_size}.json"
+
+# ── Statistical Significance ──────────────────────────────────────────────────
+# Minimum sample sizes for meaningful metric comparisons
+significance:
+  min_queries_per_bucket: 1000   # Below this, recall estimates have high variance
+  confidence_level: 0.95
+  # At n=1667 per bucket and expected Recall@1 near 0.80:
+  # 95% CI width ≈ ±2% — acceptable for research purposes
+  # For production: need n≥5000 per bucket for ±1% CI
+
+# ── Reporting ─────────────────────────────────────────────────────────────────
+# Columns written to master_results.csv
+master_csv_columns:
+  - experiment_id
+  - model
+  - serialization
+  - dims
+  - quantization
+  - index_size
+  - bucket
+  - recall_at_1
+  - recall_at_5
+  - recall_at_10
+  - precision_at_1
+  - precision_at_5
+  - precision_at_10
+  - mrr_at_10
+  - ndcg_at_10
+  - p50_latency_ms
+  - p95_latency_ms
+  - p99_latency_ms
+  - index_ram_gb
+  - timestamp
+  - notes

@@ -1,0 +1,93 @@
+# Fine-tuning Configuration
+# Controls all aspects of embedding model domain adaptation.
+# Uses Matryoshka Representation Learning (MRL) + Multiple Negatives Ranking Loss (MNRL).
+# Primary target: nomic-ai/nomic-embed-text-v1.5
+
+# ── Model ─────────────────────────────────────────────────────────────────────
+base_model: nomic-ai/nomic-embed-text-v1.5
+requires_trust_remote_code: true  # Required for nomic models
+
+# ── Serialization ─────────────────────────────────────────────────────────────
+# Run fine-tuning once per format to compare.
+# "pipe"     → "Jonathan Smith | Google Inc | j.smith@google.com | USA"
+# "keyvalue" → "first_name: Jonathan last_name: Smith company: Google Inc ..."
+serialization_format: pipe  # Switch to "keyvalue" for experiment 004
+
+# ── MRL Settings ──────────────────────────────────────────────────────────────
+# Matryoshka dimensions — model is trained to produce useful embeddings
+# at ALL of these dimensions simultaneously. Loss is summed across all dims.
+matryoshka_dims: [768, 512, 256, 128, 64]
+matryoshka_loss_weights: null  # null = equal weights; or list matching matryoshka_dims
+
+# ── Loss Function ─────────────────────────────────────────────────────────────
+# matryoshka_mnrl: MatryoshkaLoss wrapping MultipleNegativesRankingLoss
+# This is the recommended combination from the sentence-transformers docs.
+loss: matryoshka_mnrl
+
+# MNRL settings
+mnrl_scale: 20.0          # Temperature scaling (higher = sharper distribution)
+mnrl_similarity: cosine   # cosine or dot_product
+
+# ── Training Hyperparameters ──────────────────────────────────────────────────
+batch_size: 256           # In-batch negatives with MNRL — larger is better
+                           # Each batch produces N×(N-1) implicit negatives
+                           # Reduce to 128 if MPS OOM
+epochs: 3
+warmup_ratio: 0.1         # Fraction of total steps used for LR warmup
+learning_rate: 2.0e-5
+weight_decay: 0.01
+adam_epsilon: 1.0e-8
+max_grad_norm: 1.0
+
+# ── Hard Negative Curriculum ──────────────────────────────────────────────────
+# Gradually increase the proportion of hard negatives across epochs.
+# Early training with too many hard negatives causes instability.
+hard_negative_weight: 5.0  # Weight applied to hard negative loss vs random negatives
+curriculum:
+  epoch1_hard_neg_ratio: 0.10   # 10% hard negatives in epoch 1 (easy learning)
+  epoch2_hard_neg_ratio: 0.30   # 30% hard negatives in epoch 2 (medium difficulty)
+  epoch3_hard_neg_ratio: 0.50   # 50% hard negatives in epoch 3 (full difficulty)
+
+# ── Evaluation During Training ────────────────────────────────────────────────
+eval_steps: 500           # Evaluate on dev set every N steps
+save_steps: 1000          # Save checkpoint every N steps
+save_total_limit: 3       # Keep only last N checkpoints
+load_best_model_at_end: true
+metric_for_best_model: eval_recall_at_10   # Primary metric for model selection
+
+# ── Precision ─────────────────────────────────────────────────────────────────
+fp16: false    # Disabled — M3 Pro uses MPS, not CUDA. CUDA FP16 mixed precision
+               # is not available on MPS. Use MPS native float (bfloat16-ish).
+bf16: false    # Same — not supported on MPS via transformers trainer
+use_mps: true  # Enable MPS (Apple Silicon GPU) acceleration
+
+# ── Data ──────────────────────────────────────────────────────────────────────
+triplets_round1: data/triplets/triplets_round1.parquet
+triplets_round2: data/triplets/triplets_round2.parquet
+eval_set_for_training: data/eval/eval_pristine.parquet   # Dev set during training
+
+# Dev set size (sampled from eval set for fast training-time evaluation)
+dev_set_size: 1000
+
+# ── Output ────────────────────────────────────────────────────────────────────
+output_dir: models/
+run_name: nomic_v15_pipe_ep3_bs256  # Update for each run
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+wandb_project: entity-resolution-poc
+wandb_entity: null        # Set to your W&B username or leave null for default
+logging_steps: 50
+report_to: [wandb]        # Also logs to console via rich
+
+# ── Reproducibility ───────────────────────────────────────────────────────────
+seed: 42
+dataloader_num_workers: 4
+dataloader_pin_memory: false  # Disable for MPS compatibility
+
+# ── Advanced ──────────────────────────────────────────────────────────────────
+# Gradient checkpointing trades compute for memory — useful if batch size is maxed out
+gradient_checkpointing: false
+gradient_accumulation_steps: 1  # Increase to simulate larger batch size if needed
+
+# Pooling strategy for base model
+pooling_mode: mean  # mean, cls, or max

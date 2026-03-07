@@ -1,0 +1,180 @@
+# Dataset Generation Configuration
+# Controls all aspects of synthetic profile generation, corruption, and evaluation set construction.
+# All scripts read from this file — do not hardcode values in scripts.
+
+# ── Scale ─────────────────────────────────────────────────────────────────────
+n_profiles: 1_200_000      # Total base profiles generated (unique identities)
+n_index: 1_000_000         # Profiles loaded into the retrieval index
+n_triplet_source: 200_000  # Profiles used as anchor sources for triplet mining
+n_eval: 10_000             # Total eval queries (split across 6 buckets ≈ 1667 each)
+random_seed: 42
+
+# ── Geographic Distribution ────────────────────────────────────────────────────
+# Reflects a B2B data platform's realistic skew toward English-speaking markets.
+# Distributions must sum to 1.0. Controls Faker locale selection and email TLD.
+country_distribution:
+  USA: 0.60
+  UK: 0.10
+  India: 0.10
+  Canada: 0.05
+  Germany: 0.05
+  Australia: 0.03
+  France: 0.03
+  Singapore: 0.02
+  Brazil: 0.02
+
+# ── Email Generation ────────────────────────────────────────────────────────────
+# email_work_ratio: fraction of profiles with work email (firstname.lastname@company.com pattern)
+# Remainder get personal emails (gmail, yahoo, hotmail, etc.)
+email_work_ratio: 0.70
+
+# Work email patterns (sampled uniformly when email_work_ratio applies):
+work_email_patterns:
+  - "{first}.{last}@{company_domain}"
+  - "{first_initial}{last}@{company_domain}"
+  - "{first}_{last}@{company_domain}"
+  - "{first}@{company_domain}"
+
+personal_email_domains:
+  - gmail.com
+  - yahoo.com
+  - hotmail.com
+  - outlook.com
+  - icloud.com
+  - protonmail.com
+
+# ── Corruption Types ────────────────────────────────────────────────────────────
+# Applied during triplet anchor generation and eval set construction.
+# Probabilities control how often each corruption is sampled for a given record.
+# Multiple corruptions can be applied to the same record (stacked).
+# Sum does NOT need to equal 1.0 — these are independent Bernoulli draws per type.
+corruption_types:
+  abbreviation:
+    # "Jonathan" → "Jon", "Robert" → "Rob"
+    probability: 0.15
+    applies_to: [first_name]
+
+  truncation:
+    # "Smith" → "Smi", "Google" → "Goo"
+    probability: 0.10
+    applies_to: [last_name, company]
+    min_chars: 3
+
+  levenshtein_1:
+    # Single character edit (insert/delete/substitute/transpose)
+    # "Smith" → "Smyth", "john" → "jonh"
+    probability: 0.20
+    applies_to: [first_name, last_name]
+    edit_distance: 1
+
+  levenshtein_2:
+    # Two character edits
+    # "Jonathan" → "Jonathon" or "Johnathen"
+    probability: 0.10
+    applies_to: [first_name, last_name, company]
+    edit_distance: 2
+
+  field_drop_single:
+    # Drop one field entirely (set to None/empty)
+    # Simulates incomplete form submissions
+    probability: 0.20
+    applies_to: [first_name, last_name, email, company, country]
+    n_fields_dropped: 1
+
+  field_drop_double:
+    # Drop two fields entirely
+    probability: 0.10
+    applies_to: [first_name, last_name, email, company, country]
+    n_fields_dropped: 2
+
+  domain_swap:
+    # Replace email domain with a different domain for the same person
+    # "j.smith@company.com" → "j.smith@gmail.com"
+    probability: 0.10
+    applies_to: [email]
+
+  company_abbrev:
+    # "International Business Machines" → "IBM", "Google Inc" → "Goog"
+    probability: 0.05
+    applies_to: [company]
+
+  case_mutation:
+    # Random case changes: "Jonathan Smith" → "jonathan smith" or "JONATHAN SMITH"
+    probability: 0.05
+    applies_to: [first_name, last_name, company]
+    modes: [lowercase, uppercase, mixed]
+
+  nickname:
+    # Common name substitutions from a nickname lookup table
+    # "William" → "Bill", "Robert" → "Bob", "Elizabeth" → "Liz"
+    probability: 0.05
+    applies_to: [first_name]
+
+# ── Hard Negative Mining Strategy ──────────────────────────────────────────────
+# Controls how hard negatives are sourced for triplet training.
+# Round 1 uses simple heuristics; Round 2 uses BM25 to mine harder negatives.
+hard_negative_strategy:
+  round1:
+    strategy: same_company_prefix
+    # Negatives share first 4 chars of company name but are different people
+    # e.g., query is "John Smith | Google", negative is "Jane Doe | Google LLC"
+    company_prefix_len: 4
+    n_negatives_per_anchor: 3
+
+  round2:
+    strategy: bm25_mined
+    # Run BM25 on the full index, take top-50 BM25 hits that are NOT true matches
+    # These are semantically similar but non-matching records — hardest negatives
+    bm25_top_k: 50
+    n_negatives_per_anchor: 5
+    min_bm25_score: 1.0  # Only mine negatives with BM25 score > threshold
+
+# ── Evaluation Buckets ─────────────────────────────────────────────────────────
+# Each bucket tests a specific failure mode. Together they form the eval suite.
+eval_buckets:
+  - pristine              # No corruption — tests baseline retrieval quality
+  - missing_firstname     # first_name field dropped entirely
+  - missing_email_company # Both email and company dropped (hardest partial match)
+  - typo_name             # Levenshtein-1 or Levenshtein-2 applied to first/last name
+  - domain_mismatch       # Email domain swapped (work→personal or different domain)
+  - swapped_attributes    # Values from two different fields are swapped (rare real-world error)
+
+eval_bucket_counts:
+  pristine: 1667
+  missing_firstname: 1667
+  missing_email_company: 1667
+  typo_name: 1667
+  domain_mismatch: 1667
+  swapped_attributes: 1665  # Rounds to 10K total
+
+# ── Serialization Formats ──────────────────────────────────────────────────────
+# Both formats used for training and evaluation to test which works better.
+serialization_formats:
+  - pipe
+  - keyvalue
+
+serialization_config:
+  pipe:
+    separator: " | "
+    missing_token: "[MISSING]"
+    # Format: "Jonathan Smith | Google Inc | jonathan.smith@google.com | USA"
+    field_order: [first_name, last_name, company, email, country]
+
+  keyvalue:
+    separator: " "
+    kv_separator: ": "
+    missing_token: "[MISSING]"
+    # Format: "first_name: Jonathan last_name: Smith company: Google Inc email: jonathan.smith@google.com country: USA"
+    field_order: [first_name, last_name, company, email, country]
+
+# ── Output ─────────────────────────────────────────────────────────────────────
+output_dir: data/
+file_format: parquet  # parquet for all outputs; JSON also written for eval sets
+
+output_files:
+  profiles: data/raw/profiles.parquet
+  index_profiles: data/processed/index_profiles.parquet
+  triplets_round1: data/triplets/triplets_round1.parquet
+  triplets_round2: data/triplets/triplets_round2.parquet
+  eval_set: data/eval/eval_{bucket}.parquet
+  eval_set_json: data/eval/eval_{bucket}.json
