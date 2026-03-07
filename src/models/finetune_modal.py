@@ -37,24 +37,25 @@ TIMEOUT = 60 * 90  # 90 min per job (3 epochs on 600K triplets ~ 30-40min on A10
 volume = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True)
 CHECKPOINT_ROOT = Path("/checkpoints")
 
-# Container image: PyTorch CUDA devel base for flash-attn support.
-# flash-attn is required by gte-modernbert-base (ModernBERT architecture).
-# Image is cached by Modal after first build (~15-20 min one-time cost).
+# Container image: debian_slim + Python 3.12 + uv for fast installs.
+# Using .uv_pip_install() (Modal v1.1.0+) -- much faster than pip.
+# torch installed via CUDA wheel index to get GPU support on Python 3.12.
+# flash-attn dropped -- gte-modernbert falls back to standard attention gracefully,
+# saving 20+ min of compilation per image build.
 image = (
-    modal.Image.from_registry(
-        "pytorch/pytorch:2.3.1-cuda12.1-cudnn8-devel",
-        # NOTE: do NOT use add_python here -- the base image uses Python 3.10 conda env
-        # for PyTorch. add_python would create a separate Python 3.12 that has no torch.
-        # Accept Python 3.10 from the base image.
+    modal.Image.debian_slim(python_version="3.12")
+    .apt_install("git")
+    .uv_pip_install(
+        "torch==2.3.1",
+        extra_options="--index-url https://download.pytorch.org/whl/cu121",
     )
-    .pip_install(
-        # torch is already installed in the base image for Python 3.10 -- do not re-install
+    .uv_pip_install(
         "sentence-transformers>=3.3",
         "accelerate>=1.2.0",
         "transformers>=4.47",   # ModernBERT support added in 4.47
         "datasets>=2.18",
         "einops>=0.7",          # required by nomic + modernbert attention
-        "scipy>=1.12",          # required by some training metrics
+        "scipy>=1.12",
         "polars>=0.20",
         "pyarrow>=15.0",
         "huggingface-hub>=0.27",
@@ -63,11 +64,6 @@ image = (
         "rich>=13.7",
         "numpy>=1.26",
         "tqdm>=4.66",
-        # flash-attn: pre-built wheel for cu121 + torch2.3 + Python 3.10.
-        # v2.5.9.post1 is the latest version with a pre-built wheel for this combo.
-        # Passing the direct GitHub URL bypasses PyPI and avoids source compilation (~20min).
-        # Wheel list: https://github.com/Dao-AILab/flash-attention/releases/tag/v2.5.9.post1
-        "https://github.com/Dao-AILab/flash-attention/releases/download/v2.5.9.post1/flash_attn-2.5.9.post1+cu121torch2.3cxx11abiFALSE-cp310-cp310-linux_x86_64.whl",
     )
 )
 
