@@ -33,18 +33,50 @@ TIMEOUT = 60 * 90  # 90 min per job (3 epochs on 600K triplets ~ 30-40min on A10
 volume = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True)
 CHECKPOINT_ROOT = Path("/checkpoints")
 
-# Container image: debian_slim + Python 3.11 + uv for fast installs.
-# Using .uv_pip_install() (Modal v1.1.0+) -- much faster than pip.
-# torch 2.5.1 installed via CUDA 12.1 wheel index to get GPU support.
-# flash-attn installed from pre-built wheel (v2.7.2.post1, cu12, torch2.5, cxx11abi=FALSE)
-# -- no 20+ min compilation, instant install from ~190 MB wheel.
-# Python 3.11 chosen because flash-attn publishes the widest wheel coverage for 3.11.
-# torch 2.5.1 chosen because transformers >=4.48 requires torch >=2.4 (LRScheduler import).
+# ---------------------------------------------------------------------------
+# Container image: dependency version rationale (verified March 7, 2026)
+# ---------------------------------------------------------------------------
+# Python 3.11:
+#   flash-attn publishes widest pre-built wheel coverage for 3.11.
+#
+# torch==2.6.0 (cu124 index):
+#   PPLX model's modeling.py calls create_causal_mask(or_mask_function=...)
+#   which requires torch>=2.6 (transformers gates this behind a version check).
+#   cu124 is the matching CUDA wheel index for torch 2.6 (cu121 was dropped).
+#
+# flash-attn==2.7.3 (pre-built wheel):
+#   Must be ABI-matched to torch version. The wheel filename encodes this:
+#   torch2.6 + cu12 + cxx11abiFALSE (matches pip-installed torch) + cp311.
+#   Installed from GitHub release -- no 20+ min compilation.
+#
+# sentence-transformers>=5.0,<6:
+#   PPLX model's st_quantize.py does `from sentence_transformers.models import Module`.
+#   Module class does NOT exist in 3.x or 4.x (verified against source for
+#   v3.3.1, v3.4.1, v4.0.0-v4.1.0). Added in 5.0.0.
+#
+# transformers==4.57.6 (pinned):
+#   PPLX model's custom code (trust_remote_code=True) requires:
+#     - Qwen3Model            (added in 4.51.0)
+#     - masking_utils module   (added in 4.53.0)
+#     - TransformersKwargs     (added in 4.54.0)
+#   Pinned to last stable 4.x to avoid transformers 5.x breaking changes
+#   (major release: removed deprecations, changed APIs, 3 days old as of writing).
+#   sentence-transformers 5.x requires transformers>=4.41,<6 -- 4.57.6 satisfies.
+#
+# Other 4 models (MiniLM, BGE, GTE-ModernBERT, Nomic):
+#   All use standard transformers architectures with NO custom .py files on HF Hub.
+#   trust_remote_code=true is set for GTE/Nomic in config but has no effect.
+#   These models work with any transformers 4.x and any sentence-transformers 3.x+.
+#   PPLX is the sole constraint driver for the entire stack.
+#
+# If adding a new model with trust_remote_code=True, check its HF repo for
+# custom .py files and verify their imports against this pinned stack.
+# ---------------------------------------------------------------------------
 
 # Pre-built flash-attn wheel pinned for reproducibility:
 _FLASH_ATTN_WHEEL = (
-    "https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.2.post1/"
-    "flash_attn-2.7.2.post1+cu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl"
+    "https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.3/"
+    "flash_attn-2.7.3+cu12torch2.6cxx11abiFALSE-cp311-cp311-linux_x86_64.whl"
 )
 
 # Robust path resolution for the configs dir (works when __file__ is inside modal/tmp paths)
@@ -58,16 +90,16 @@ image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("git")
     .uv_pip_install(
-        "torch==2.5.1",
-        extra_options="--index-url https://download.pytorch.org/whl/cu121",
+        "torch==2.6.0",
+        extra_options="--index-url https://download.pytorch.org/whl/cu124",
     )
     .uv_pip_install(
         _FLASH_ATTN_WHEEL,
     )
     .uv_pip_install(
-        "sentence-transformers>=3.3",
+        "sentence-transformers>=5.0,<6",  # pplx-embed st_quantize.py needs Module (added in 5.0)
         "accelerate>=1.2.0",
-        "transformers>=4.47",
+        "transformers==4.57.6",           # pinned: last stable 4.x; PPLX needs Qwen3(>=4.51), masking_utils(>=4.53), TransformersKwargs(>=4.54)
         "datasets>=2.18",
         "einops>=0.7",
         "scipy>=1.12",

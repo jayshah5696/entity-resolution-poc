@@ -288,18 +288,61 @@ modal run src/models/finetune_modal.py::run_all
 
 **Image setup (current state — March 2026):**
 ```python
-modal.Image.debian_slim(python_version="3.12")
+modal.Image.debian_slim(python_version="3.11")
     .apt_install("git")
-    .uv_pip_install("torch==2.3.1",
-                    extra_options="--index-url https://download.pytorch.org/whl/cu121")
-    .uv_pip_install("sentence-transformers>=3.3", ...)
+    .uv_pip_install("torch==2.6.0",
+                    extra_options="--index-url https://download.pytorch.org/whl/cu124")
+    .uv_pip_install(FLASH_ATTN_WHEEL)   # v2.7.3, pre-built for torch2.6+cu12+cp311
+    .uv_pip_install("sentence-transformers>=5.0,<6",
+                    "transformers==4.57.6", ...)
 ```
 
 **Why this setup:**
 - `debian_slim` + `uv_pip_install` = fastest build (~2 min vs 20+ min with flash-attn compile)
-- `python_version="3.12"` explicit — avoids conda Python 3.10 confusion from pytorch base images
+- `python_version="3.11"` — flash-attn publishes the widest pre-built wheel coverage for 3.11
 - `torch` installed first separately with CUDA index so uv resolves correctly
-- flash-attn deliberately dropped — 20 min compile, marginal gain, not worth it
+- flash-attn installed from pre-built GitHub wheel — no compilation, instant install
+
+**Dependency version constraints (verified March 7, 2026):**
+
+The PPLX model (`perplexity-ai/pplx-embed-v1-0.6b`) has custom code downloaded from HF Hub at runtime (`trust_remote_code=True`). These files impose hard constraints on the entire dependency stack:
+
+| PPLX import | Source file | First available in |
+|---|---|---|
+| `from transformers import Qwen3Model` | `modeling.py` | transformers **4.51.0** |
+| `from transformers.masking_utils import create_causal_mask` | `modeling.py` | transformers **4.53.0** |
+| `from transformers.utils import TransformersKwargs` | `modeling.py` | transformers **4.54.0** |
+| `create_causal_mask(or_mask_function=...)` | `modeling.py` | torch **≥2.6** |
+| `from sentence_transformers.models import Module` | `st_quantize.py` | sentence-transformers **5.0.0** |
+
+**Pinned stack (all verified against source code):**
+
+| Package | Version | Why this version |
+|---|---|---|
+| Python | 3.11 | flash-attn pre-built wheels available |
+| torch | ==2.6.0 (cu124) | PPLX `create_causal_mask(or_mask_function=...)` needs ≥2.6 |
+| flash-attn | 2.7.3+cu12torch2.6cxx11abiFALSE | ABI-matched to torch 2.6; `cxx11abiFALSE` matches pip-installed torch |
+| sentence-transformers | ≥5.0,<6 → 5.2.3 | PPLX `st_quantize.py` needs `Module` class (added in 5.0) |
+| transformers | ==4.57.6 (pinned) | Last stable 4.x; has all PPLX deps; avoids transformers 5.x breaking changes |
+| accelerate | ≥1.2.0 | Compatible with all models |
+
+**Why pin transformers to 4.57.6 (not 5.x)?**
+- `transformers` 5.0 (released Feb 2026) is a major breaking release — removed deprecations, changed `apply_chat_template` return type, removed legacy config file saving.
+- We have 5 models with different architectures. Pinning to last stable 4.x avoids untested breakage.
+- PPLX's custom code works with 4.57.6 (all required imports verified).
+- `sentence-transformers` 5.2.3 requires `transformers>=4.41,<6` — 4.57.6 satisfies this.
+
+**Why sentence-transformers ≥5.0 (not 3.x or 4.x)?**
+- PPLX's `st_quantize.py` does `from sentence_transformers.models import Module`.
+- `Module` class does NOT exist in sentence-transformers 3.x or 4.x (verified against source: v3.3.1, v3.4.1, v4.0.0–v4.1.0).
+- `Module` was added in sentence-transformers 5.0.0.
+
+**Other 4 models have NO custom code:**
+- MiniLM-L6, BGE-small: standard BERT, `trust_remote_code=false`
+- GTE-ModernBERT, Nomic v1.5: `trust_remote_code=true` in config but no `.py` files on HF Hub — they use standard transformers model classes
+- These models work with any transformers 4.x/5.x and any sentence-transformers version.
+
+**⚠ PPLX is the constraint driver.** If you add a 6th model with `trust_remote_code=true`, check its HF repo for custom `.py` files and verify their imports against the pinned stack.
 
 **Modal secrets required:**
 ```bash
@@ -388,9 +431,9 @@ Full fine-tuning for a POC. LoRA adds complexity. If compute becomes a constrain
 
 Fewer tokens = faster training and inference. The model learns positional structure. KV is better zero-shot but that's not our use case post-fine-tuning.
 
-### Why drop flash-attn?
+### Why flash-attn via pre-built GitHub wheel?
 
-Modal's pypi mirror serves flash-attn source tarball regardless of wheel URLs. Compiling takes 20+ min per image build. gte-modernbert falls back to standard attention and still trains — slower by ~15% but that's acceptable for a POC.
+Modal's pypi mirror serves flash-attn source tarball regardless of wheel URLs. Compiling takes 20+ min per image build. Solution: install directly from the pre-built GitHub release wheel (`flash_attn-2.7.3+cu12torch2.6cxx11abiFALSE-cp311-cp311-linux_x86_64.whl`). Instant install, no compilation. The wheel filename encodes the exact ABI contract: torch version, CUDA version, C++ ABI flag, and Python version — all must match or you get silent segfaults or `undefined symbol` errors at import time.
 
 ### Why `uv_pip_install` over `pip_install` in Modal?
 
