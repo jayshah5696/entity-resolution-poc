@@ -142,8 +142,8 @@ uv run python src/eval/run_eval.py \
 #      modal secret create wandb WANDB_API_KEY=<your_wandb_key>
 #
 #    One-time data upload to HF Hub (runs locally, no Modal):
-#      huggingface-cli login
-#      huggingface-cli upload jayshah5696/entity-resolution-triplets \
+#      hf auth login
+#      hf upload jayshah5696/entity-resolution-triplets \
 #          data/triplets/triplets.parquet triplets.parquet --repo-type dataset
 #      # Creates: https://huggingface.co/datasets/jayshah5696/entity-resolution-triplets
 #
