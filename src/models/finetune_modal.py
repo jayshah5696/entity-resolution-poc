@@ -63,12 +63,11 @@ image = (
         "rich>=13.7",
         "numpy>=1.26",
         "tqdm>=4.66",
-    )
-    .run_commands(
-        # Pre-built wheel for cu121 + torch2.3 + Python 3.10 (matches base image exactly).
-        # Much faster than compiling (~30s vs ~20min). v2.5.9.post1 is latest with torch2.3 support.
+        # flash-attn: pre-built wheel for cu121 + torch2.3 + Python 3.10.
+        # v2.5.9.post1 is the latest version with a pre-built wheel for this combo.
+        # Passing the direct GitHub URL bypasses PyPI and avoids source compilation (~20min).
         # Wheel list: https://github.com/Dao-AILab/flash-attention/releases/tag/v2.5.9.post1
-        "pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.5.9.post1/flash_attn-2.5.9.post1+cu121torch2.3cxx11abiFALSE-cp310-cp310-linux_x86_64.whl"
+        "https://github.com/Dao-AILab/flash-attention/releases/download/v2.5.9.post1/flash_attn-2.5.9.post1+cu121torch2.3cxx11abiFALSE-cp310-cp310-linux_x86_64.whl",
     )
 )
 
