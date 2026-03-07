@@ -454,39 +454,12 @@ def run_all():
 
 
 # ---------------------------------------------------------------------------
-# Data upload helper (run once from your M3)
+# Data upload: DO NOT use Modal for this.
+# Just run directly on your M3:
+#
+#   huggingface-cli upload jayshah5696/entity-resolution-triplets \
+#       data/triplets/triplets.parquet triplets.parquet --repo-type dataset
+#
+# Or use the standalone script:
+#   python src/models/upload_triplets.py
 # ---------------------------------------------------------------------------
-
-@app.local_entrypoint()
-def upload_data(
-    triplets_path: str = "data/triplets/triplets.parquet",
-):
-    """
-    Upload triplets parquet to HuggingFace Hub as a dataset.
-    Run once from your M3:
-        modal run src/models/finetune_modal.py::upload_data
-    """
-    from huggingface_hub import HfApi
-    hf_token = os.environ.get("HF_TOKEN")
-    if not hf_token:
-        print("ERROR: HF_TOKEN not set. Export it: export HF_TOKEN=<your token>")
-        sys.exit(1)
-
-    path = Path(triplets_path)
-    if not path.exists():
-        print(f"ERROR: {triplets_path} not found. Run from repo root.")
-        sys.exit(1)
-
-    size_mb = path.stat().st_size / 1024 / 1024
-    print(f"Uploading {triplets_path} ({size_mb:.1f} MB) to {HF_DATASET_REPO}...")
-
-    api = HfApi(token=hf_token)
-    api.create_repo(repo_id=HF_DATASET_REPO, repo_type="dataset", exist_ok=True, private=False)
-    api.upload_file(
-        path_or_fileobj=triplets_path,
-        path_in_repo="triplets.parquet",
-        repo_id=HF_DATASET_REPO,
-        repo_type="dataset",
-        commit_message="Upload entity resolution triplets (600K, pipe+kv serialization)",
-    )
-    print(f"Done -> https://huggingface.co/datasets/{HF_DATASET_REPO}")

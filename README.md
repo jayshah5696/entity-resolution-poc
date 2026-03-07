@@ -141,9 +141,10 @@ uv run python src/eval/run_eval.py \
 #      modal secret create huggingface HF_TOKEN=<your_hf_token>
 #      modal secret create wandb WANDB_API_KEY=<your_wandb_key>
 #
-#    One-time data upload to HF Hub:
-#      export HF_TOKEN=<your_hf_token>
-#      modal run src/models/finetune_modal.py::upload_data
+#    One-time data upload to HF Hub (runs locally, no Modal):
+#      huggingface-cli login
+#      huggingface-cli upload jayshah5696/entity-resolution-triplets \
+#          data/triplets/triplets.parquet triplets.parquet --repo-type dataset
 #      # Creates: https://huggingface.co/datasets/jayshah5696/entity-resolution-triplets
 #
 #    Launch all 3 jobs in parallel (bge_small, gte_modernbert_base, nomic_v15):
