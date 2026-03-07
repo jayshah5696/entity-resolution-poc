@@ -63,30 +63,28 @@ tests/          pytest suite for data pipeline
 
 ## How to Run
 
-**Prerequisites:** Python 3.11+, ~50GB disk.
+**Prerequisites:** Python 3.11+, [uv](https://github.com/astral-sh/uv), ~50GB disk.
 
 ```bash
 git clone https://github.com/jayshah5696/entity-resolution-poc
 cd entity-resolution-poc
-pip install -r requirements.txt  # or: pip install faker polars pyarrow python-levenshtein rank-bm25 rich pyyaml typer pytest
+uv sync
 ```
 
-Scripts use `src.*` imports so always run from the repo root with `PYTHONPATH=.`:
+`uv sync` installs all deps from pyproject.toml and installs `src` as a package so imports work. Run all scripts with `uv run`:
 
 ```bash
 # 1. Generate 1.2M base profiles and split into index/triplets/eval (~20-30 min on M3 Pro)
-python src/data/generate.py \
-    --config configs/dataset.yaml \
-    --output-dir data/
+uv run python src/data/generate.py --config configs/dataset.yaml --output-dir data/
 
 # 2. Build training triplets from the 200K triplet_source split (~10-15 min)
-PYTHONPATH=. python src/data/triplets.py \
+uv run python src/data/triplets.py \
     --config configs/dataset.yaml \
     --profiles data/processed/triplet_source.parquet \
     --output-dir data/triplets/
 
 # 3. Build eval query set -- 6 buckets x 10K = 60K queries (~2-3 min)
-PYTHONPATH=. python src/data/eval_set.py \
+uv run python src/data/eval_set.py \
     --config configs/dataset.yaml \
     --eval-profiles data/eval/eval_profiles.parquet \
     --output-dir data/eval/
@@ -97,7 +95,7 @@ BM25 baseline + eval harness, fine-tuning, and results aggregation scripts are n
 Tests:
 
 ```bash
-PYTHONPATH=. pytest tests/ -v
+uv run pytest tests/ -v
 ```
 
 ---
