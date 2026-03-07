@@ -135,12 +135,34 @@ uv run python src/eval/run_eval.py \
     --serialization pipe \
     --experiment-id 004
 
-# 8. Fine-tune a model (4-6h on M3 Pro, run overnight)
-uv run python src/models/finetune.py \
-    --model gte_modernbert_base \
-    --serialization pipe \
-    --triplets data/triplets/triplets.parquet \
-    --output-dir models/gte_modernbert_base_pipe_ft
+# 8. Fine-tune all 3 models in parallel on Modal A10G (~40 min, ~$3 total)
+#
+#    One-time setup (do once):
+#      modal secret create huggingface HF_TOKEN=<your_hf_token>
+#      modal secret create wandb WANDB_API_KEY=<your_wandb_key>
+#
+#    One-time data upload to HF Hub:
+#      export HF_TOKEN=<your_hf_token>
+#      modal run src/models/finetune_modal.py::upload_data
+#      # Creates: https://huggingface.co/datasets/jayshah5696/entity-resolution-triplets
+#
+#    Launch all 3 jobs in parallel (bge_small, gte_modernbert_base, nomic_v15):
+modal run src/models/finetune_modal.py::run_all
+#    Monitor: https://wandb.ai/jayshah5696/entity-resolution-poc
+#    Models pushed to: https://huggingface.co/jayshah5696
+#
+#    Single model (debug or re-run one):
+#      modal run src/models/finetune_modal.py::finetune_one --model-key gte_modernbert_base
+#
+#    Resume a crashed run (picks up from last checkpoint):
+#      modal run src/models/finetune_modal.py::finetune_one --model-key gte_modernbert_base --resume
+#
+#    Local M3 fallback (slow, ~15h per model -- only if Modal unavailable):
+#      uv run python src/models/finetune.py \
+#          --model gte_modernbert_base \
+#          --serialization pipe \
+#          --triplets data/triplets/triplets.parquet \
+#          --output-dir models/gte_modernbert_base_pipe_ft
 
 # 9. Aggregate all results into CSV + Markdown report
 uv run python src/eval/aggregate.py \
