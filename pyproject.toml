@@ -11,8 +11,8 @@ license = { text = "MIT" }
 
 dependencies = [
     "faker>=24.0",
-    "sentence-transformers>=3.0",
-    "accelerate>=1.1.0",
+    "sentence-transformers>=3.3",
+    "accelerate>=1.2.0",
     "faiss-cpu>=1.8",
     "rank-bm25>=0.2",
     "datasets>=2.18",
