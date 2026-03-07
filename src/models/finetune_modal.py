@@ -66,7 +66,7 @@ image = (
     )
     .run_commands(
         # flash-attn pinned to match torch 2.3.1 -- compile once, cached forever
-        "pip install flash-attn==2.5.9 --no-build-isolation"
+        "pip install flash-attn --no-build-isolation"  # let pip resolve version compatible with torch 2.3.1
     )
 )
 
