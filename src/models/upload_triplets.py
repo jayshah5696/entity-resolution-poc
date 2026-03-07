@@ -10,8 +10,13 @@ Or use hf CLI directly (2026 standard):
         data/triplets/triplets.parquet triplets.parquet --repo-type dataset
 """
 
+import os
 import sys
 from pathlib import Path
+
+# Disable XetHub chunked upload -- use standard LFS. Required when hf_xet not installed.
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+
 from huggingface_hub import HfApi
 
 TRIPLETS_PATH = "data/triplets/triplets.parquet"
