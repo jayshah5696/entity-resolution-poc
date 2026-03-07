@@ -36,7 +36,6 @@ import polars as pl
 import yaml
 from rich.console import Console
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 console = Console()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")

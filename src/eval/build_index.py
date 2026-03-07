@@ -46,8 +46,6 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 
-# Ensure src is importable when run with uv run python
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.data.serialize import serialize
 from src.models.encoder import BM25Encoder, load_encoder

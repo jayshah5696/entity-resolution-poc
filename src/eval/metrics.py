@@ -11,7 +11,6 @@ No external dependencies beyond numpy.
 from __future__ import annotations
 
 import math
-from typing import Optional
 
 import numpy as np
 
@@ -101,7 +100,7 @@ def compute_metrics(
         ndcg_at_1, ndcg_at_5, ndcg_at_10
     """
     if ks is None:
-        ks = [5, 10]
+        ks = [1, 5, 10]
 
     result: dict[str, float] = {}
 

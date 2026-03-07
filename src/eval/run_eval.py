@@ -41,7 +41,6 @@ from rich.progress import (
 )
 from rich.table import Table
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.eval.metrics import aggregate_metrics, compute_metrics
 from src.models.encoder import load_encoder
@@ -183,7 +182,7 @@ def evaluate_bucket_dense(
         task = progress.add_task("Searching LanceDB", total=n)
         for i, (vec, gt_id) in enumerate(zip(query_vecs, ground_truth_ids)):
             retrieved_ids = search_single(table, vec, top_k)
-            metrics = compute_metrics(retrieved_ids, gt_id, ks=[5, 10])
+            metrics = compute_metrics(retrieved_ids, gt_id)
             per_query.append(metrics)
             progress.advance(task, 1)
 
@@ -331,7 +330,7 @@ def main() -> None:
         for qt_text, gt_id in zip(q_texts, gt_ids):
             vec = encoder.encode_queries([qt_text], batch_size=1)
             retrieved = search_single(table, vec[0], top_k)
-            all_per_query.append(compute_metrics(retrieved, gt_id, ks=[5, 10]))
+            all_per_query.append(compute_metrics(retrieved, gt_id))
 
         all_latency_info.append(latency_info)
 

@@ -34,7 +34,7 @@
 │       │                                                          │
 │       ├──► 1M index records ──► LanceDB index (per model)       │
 │       ├──► 200K triplet source ──► 600K training triplets       │
-│       └──► 60K eval queries (6 corruption buckets × 10K)        │
+│       └──► 10K eval queries (6 corruption buckets × ~1667)      │
 │                                                                  │
 └──────────────────────────────────────────────────────────────────┘
                            │
@@ -94,7 +94,7 @@ Generates 1.2M synthetic B2B contact profiles with realistic distributions:
 Split into:
 - **1M index records** → what we search against
 - **200K triplet source** → what we train from
-- **60K eval profiles** → held out for evaluation
+- **10K eval profiles** → held out for evaluation (~1,667 per corruption bucket)
 
 ### Step 2: Triplet Building (`src/data/triplets.py`)
 
@@ -106,11 +106,15 @@ positive: the clean canonical record (ground truth match)
 negative: a different profile (hard or random)
 ```
 
-Corruptions applied to anchors:
-- **Nickname substitution**: Jonathan → Jon, Michael → Mike
-- **Levenshtein-1 typos**: Smith → Smyth, Google → Googel
-- **Field drops**: remove first_name, or remove email+company together
-- **Domain swaps**: work email → gmail/yahoo/etc
+Corruptions applied to anchors (10 types in `corrupt.py`):
+- **Abbreviation**: Jonathan → Jon
+- **Nickname substitution**: William → Bill, Robert → Bob
+- **Truncation**: Schmidt → Schm
+- **Levenshtein-1/2 typos**: Smith → Smyth
+- **Field drops (single/double)**: remove first_name, or remove email+company
+- **Domain swaps**: work email → gmail/yahoo
+- **Company abbreviation**: Google Inc → Goog
+- **Case mutation**: JONATHAN SMITH
 - **Field swaps**: first_name ↔ last_name
 
 Output: `data/triplets/triplets.parquet` — 600K rows, ~50MB
@@ -122,7 +126,7 @@ Each row has columns for both serialization formats:
 
 ### Step 3: Eval Set (`src/data/eval_set.py`)
 
-Creates 6 corruption buckets × 10K = 60K evaluation queries:
+Creates 6 corruption buckets × ~1,667 = 10K evaluation queries:
 
 | Bucket | Corruption | What it tests |
 |--------|-----------|---------------|
@@ -156,16 +160,16 @@ fn:Jonathan ln:Smith org:Google Inc em:jonathan.smith@google.com co:USA
 ### Model Lock (March 2026) — 5 models, no additions
 
 ```
-┌──────────────────────┬────────┬──────────┬─────────────┬──────────────────────────┐
-│ Model                │ Params │ Dims     │ Role        │ Fine-tune?               │
-├──────────────────────┼────────┼──────────┼─────────────┼──────────────────────────┤
-│ BM25 (rank_bm25)     │ --     │ --       │ Baseline    │ No (lexical)             │
-│ all-MiniLM-L6-v2     │ 22M    │ 384      │ Floor       │ No (zero-shot only)      │
-│ bge-small-en-v1.5    │ 33M    │ 384→dual │ Efficiency  │ YES — adds MRL via FT    │
-│ gte-modernbert-base  │ 149M   │ 768      │ Primary ★  │ YES — MRL native         │
-│ nomic-embed-text-v1.5│ 137M   │ 768      │ MRL ref     │ YES — MRL native         │
-│ pplx-embed-v1-0.6b   │ 600M   │ 1536     │ SOTA ceil   │ YES (fine-tune in POC)   │
-└──────────────────────┴────────┴──────────┴─────────────┴──────────────────────────┘
+┌──────────────────────┬────────┬────────────────────┬─────────────┬──────────────────────────┐
+│ Model                │ Params │ Dims (MRL)         │ Role        │ Fine-tune?               │
+├──────────────────────┼────────┼────────────────────┼─────────────┼──────────────────────────┤
+│ BM25 (rank_bm25)     │ --     │ --                 │ Baseline    │ No (lexical)             │
+│ all-MiniLM-L6-v2     │ 22M    │ 384                │ Floor       │ No (zero-shot only)      │
+│ bge-small-en-v1.5    │ 33M    │ 384 (→64 via FT)   │ Efficiency  │ YES — adds MRL via FT    │
+│ gte-modernbert-base  │ 149M   │ 768 (→64 native)   │ Primary ★   │ YES — MRL native         │
+│ nomic-embed-text-v1.5│ 137M   │ 768 (→64 native)   │ MRL ref     │ YES — MRL native         │
+│ pplx-embed-v1-0.6b   │ 600M   │ 1536 (→64 native)  │ SOTA ceil   │ No (zero-shot only)      │
+└──────────────────────┴────────┴────────────────────┴─────────────┴──────────────────────────┘
 ```
 
 ### Critical Model Notes
@@ -451,17 +455,18 @@ entity-resolution-poc/
 ├── pyproject.toml            ← Python 3.12, deps via uv
 │
 ├── configs/
-│   ├── models.yaml           ← LOCKED model registry (5 models)
+│   ├── models.yaml           ← LOCKED model registry (6 entries: BM25 + 5 embedding)
 │   ├── finetune.yaml         ← Training hyperparameters
+│   ├── eval.yaml             ← Evaluation harness config (metrics, quantization, latency)
 │   └── dataset.yaml          ← Data generation config
 │
 ├── src/
 │   ├── data/
 │   │   ├── generate.py       ← Creates 1.2M synthetic profiles
 │   │   ├── triplets.py       ← Builds (anchor, positive, negative) triplets
-│   │   ├── corrupt.py        ← 6 corruption strategies
+│   │   ├── corrupt.py        ← 10 corruption strategies
 │   │   ├── serialize.py      ← pipe and kv format converters
-│   │   └── eval_set.py       ← Creates 60K eval queries
+│   │   └── eval_set.py       ← Creates 10K eval queries (6 buckets)
 │   │
 │   ├── models/
 │   │   ├── finetune.py       ← LOCAL training (MPS, slow)
@@ -476,15 +481,27 @@ entity-resolution-poc/
 │       ├── metrics.py        ← Recall@K, MRR calculations
 │       └── aggregate.py      ← Combines results → CSV + report
 │
+├── tests/
+│   ├── test_corrupt.py       ← 58 tests for corruption logic
+│   ├── test_serialize.py     ← 35 tests for serialization
+│   ├── test_nicknames.py     ← 30 tests for nickname lookup
+│   └── test_metrics.py       ← 80 tests for retrieval metrics
+│
+├── docs/
+│   ├── UNDERSTANDING.md      ← YOU ARE HERE
+│   ├── dataset-design.md     ← Full data spec (schema, corruptions, triplets)
+│   ├── evaluation-protocol.md← Metric definitions, eval buckets, latency methodology
+│   ├── decisions.md          ← 5 Architecture Decision Records (ADRs)
+│   └── experiment-log.md     ← Per-experiment tracking template
+│
 └── data/                     ← Generated (not in git)
     ├── processed/
-    │   ├── index.parquet     ← 1M records to search against
+    │   ├── index_profiles.parquet  ← 1M records to search against
     │   └── triplet_source.parquet
     ├── triplets/
     │   └── triplets.parquet  ← 600K training triplets
     └── eval/
-        ├── eval_queries.parquet
-        └── eval_queries_{bucket}.parquet × 6
+        └── eval_{bucket}.parquet × 6  ← Per-bucket eval queries (~1667 each)
 ```
 
 ---

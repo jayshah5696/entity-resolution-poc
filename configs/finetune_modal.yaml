@@ -1,0 +1,76 @@
+# Fine-tuning on Modal GPUs — config-driven approach
+# Each model inherits from `defaults` unless it overrides a field.
+# To add a model: just add a new entry under `models:`.
+
+# ── Modal Infrastructure ──────────────────────────────────────────────────────
+modal:
+  app_name: entity-resolution-finetune
+  volume_name: entity-resolution-checkpoints
+  gpu: A10G
+  timeout_min: 90
+
+# ── HuggingFace / W&B ────────────────────────────────────────────────────────
+hf_dataset_repo: jayshah5696/entity-resolution-triplets
+hf_model_prefix: jayshah5696/er
+wandb_project: entity-resolution-poc
+wandb_entity: jayshah5696
+
+# ── Shared Training Defaults ─────────────────────────────────────────────────
+# Models inherit these unless they override them in their own section.
+defaults:
+  epochs: 3
+  batch_size: 256
+  grad_accum: 1
+  learning_rate: 2.0e-5
+  warmup_ratio: 0.1
+  weight_decay: 0.01
+  logging_steps: 50
+  save_steps: 500
+  save_total_limit: 2
+  mnrl_scale: 20.0
+  dataloader_num_workers: 4
+  curriculum: [0.10, 0.30, 0.50]
+  seed: 42
+  bf16: true
+  fp16: false
+  grad_checkpointing: false
+
+# ── Per-Model Configs ─────────────────────────────────────────────────────────
+models:
+  minilm_l6:
+    hf_id: sentence-transformers/all-MiniLM-L6-v2
+    dims: [384, 256, 128, 64]
+    # uses all defaults: batch=256, grad_accum=1, no grad_ckpt
+
+  bge_small:
+    hf_id: BAAI/bge-small-en-v1.5
+    dims: [384, 256, 128, 64]
+    # uses all defaults: batch=256, grad_accum=1, no grad_ckpt
+
+  gte_modernbert_base:
+    hf_id: Alibaba-NLP/gte-modernbert-base
+    dims: [768, 512, 256, 128, 64]
+    trust_remote_code: true
+    mrl_native: true
+    # A10G OOM at batch=256 with flash-attn + 5 matryoshka dims
+    batch_size: 64
+    grad_accum: 4           # eff batch=256, same as default
+    grad_checkpointing: true
+
+  nomic_v15:
+    hf_id: nomic-ai/nomic-embed-text-v1.5
+    dims: [768, 512, 256, 128, 64]
+    trust_remote_code: true
+    mrl_native: true
+    query_prefix: search_query
+    doc_prefix: search_document
+    # uses default batch=256, grad_accum=1 — fits A10G fine
+
+  pplx_embed_v1_06b:
+    hf_id: perplexity-ai/pplx-embed-v1-0.6b
+    dims: [1024, 768, 256, 128, 64]  # actual model dim is 1024
+    trust_remote_code: true
+    mrl_native: true
+    batch_size: 8
+    grad_accum: 32          # eff batch=256
+    grad_checkpointing: true

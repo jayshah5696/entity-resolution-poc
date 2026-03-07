@@ -16,11 +16,10 @@ get_nickname(name: str) -> str
 from __future__ import annotations
 
 import random
-from typing import Dict, List
 
 # ── Primary table: canonical → [nicknames] ───────────────────────────────────
 
-NICKNAMES: Dict[str, List[str]] = {
+NICKNAMES: dict[str, list[str]] = {
     # ── Male ──────────────────────────────────────────────────────────────────
     "James": ["Jim", "Jimmy", "Jamie"],
     "Robert": ["Rob", "Bob", "Bobby", "Robbie"],
@@ -132,7 +131,7 @@ NICKNAMES: Dict[str, List[str]] = {
 
 # ── Reverse table: nickname → canonical ───────────────────────────────────────
 
-NICKNAME_TO_CANONICAL: Dict[str, str] = {}
+NICKNAME_TO_CANONICAL: dict[str, str] = {}
 for _canonical, _nicks in NICKNAMES.items():
     for _nick in _nicks:
         # If a nickname maps to multiple canonicals, keep first encountered

@@ -1,0 +1,13 @@
+{
+  "model_key": "bm25_baseline",
+  "hf_id": "",
+  "serialization": "pipe",
+  "quantization": "none",
+  "dim": 0,
+  "n_records": 1000050,
+  "index_size_mb": 143.65,
+  "build_timestamp": "2026-03-07T08:58:03.726291+00:00",
+  "device": "cpu",
+  "model_path": null,
+  "build_time_sec": 2.68
+}

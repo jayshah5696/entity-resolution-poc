@@ -14,7 +14,6 @@ import random
 import re
 import string
 from copy import deepcopy
-from typing import Optional
 
 from Levenshtein import distance as lev_distance  # noqa: F401  (also used for validation)
 from src.utils.nicknames import get_nickname

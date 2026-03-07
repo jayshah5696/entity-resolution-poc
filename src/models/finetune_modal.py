@@ -24,10 +24,6 @@ import modal
 
 APP_NAME = "entity-resolution-finetune"
 VOLUME_NAME = "entity-resolution-checkpoints"
-HF_DATASET_REPO = "jayshah5696/entity-resolution-triplets"
-HF_MODEL_PREFIX = "jayshah5696/er"
-WANDB_PROJECT = "entity-resolution-poc"
-WANDB_ENTITY = "jayshah5696"
 
 # GPU: A10G -- 24GB VRAM, good for 149M models at batch=256. ~$0.90/hr on Modal.
 GPU = "A10G"
@@ -37,24 +33,43 @@ TIMEOUT = 60 * 90  # 90 min per job (3 epochs on 600K triplets ~ 30-40min on A10
 volume = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True)
 CHECKPOINT_ROOT = Path("/checkpoints")
 
-# Container image: debian_slim + Python 3.12 + uv for fast installs.
+# Container image: debian_slim + Python 3.11 + uv for fast installs.
 # Using .uv_pip_install() (Modal v1.1.0+) -- much faster than pip.
-# torch installed via CUDA wheel index to get GPU support on Python 3.12.
-# flash-attn dropped -- gte-modernbert falls back to standard attention gracefully,
-# saving 20+ min of compilation per image build.
+# torch 2.5.1 installed via CUDA 12.1 wheel index to get GPU support.
+# flash-attn installed from pre-built wheel (v2.7.2.post1, cu12, torch2.5, cxx11abi=FALSE)
+# -- no 20+ min compilation, instant install from ~190 MB wheel.
+# Python 3.11 chosen because flash-attn publishes the widest wheel coverage for 3.11.
+# torch 2.5.1 chosen because transformers >=4.48 requires torch >=2.4 (LRScheduler import).
+
+# Pre-built flash-attn wheel pinned for reproducibility:
+_FLASH_ATTN_WHEEL = (
+    "https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.2.post1/"
+    "flash_attn-2.7.2.post1+cu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl"
+)
+
+# Robust path resolution for the configs dir (works when __file__ is inside modal/tmp paths)
+try:
+    _repo_root = Path(__file__).resolve().parents[2]
+except IndexError:
+    # If __file__ lacks 3 levels of parents, fallback to cwd (which is the repo root for uv run)
+    _repo_root = Path.cwd()
+
 image = (
-    modal.Image.debian_slim(python_version="3.12")
+    modal.Image.debian_slim(python_version="3.11")
     .apt_install("git")
     .uv_pip_install(
-        "torch==2.3.1",
+        "torch==2.5.1",
         extra_options="--index-url https://download.pytorch.org/whl/cu121",
+    )
+    .uv_pip_install(
+        _FLASH_ATTN_WHEEL,
     )
     .uv_pip_install(
         "sentence-transformers>=3.3",
         "accelerate>=1.2.0",
-        "transformers>=4.47",   # ModernBERT support added in 4.47
+        "transformers>=4.47",
         "datasets>=2.18",
-        "einops>=0.7",          # required by nomic + modernbert attention
+        "einops>=0.7",
         "scipy>=1.12",
         "polars>=0.20",
         "pyarrow>=15.0",
@@ -65,80 +80,43 @@ image = (
         "numpy>=1.26",
         "tqdm>=4.66",
     )
+    .add_local_python_source("src")
+    .add_local_dir(
+        local_path=str(_repo_root / "configs"),
+        remote_path="/configs"
+    )
 )
 
 app = modal.App(APP_NAME, image=image)
 
 # ---------------------------------------------------------------------------
-# Model registry -- mirrors configs/models.yaml (inlined to avoid file deps)
+# Load Config
 # ---------------------------------------------------------------------------
 
-MODELS = {
-    "minilm_l6": {
-        "hf_id": "sentence-transformers/all-MiniLM-L6-v2",
-        "dims": [384, 256, 128, 64],
-        "mrl_native": False,
-        "trust_remote_code": False,
-        "query_prefix": None,
-        "doc_prefix": None,
-    },
-    "bge_small": {
-        "hf_id": "BAAI/bge-small-en-v1.5",
-        "dims": [384, 256, 128, 64],
-        "mrl_native": False,
-        "trust_remote_code": False,
-        "query_prefix": None,
-        "doc_prefix": None,
-    },
-    "gte_modernbert_base": {
-        "hf_id": "Alibaba-NLP/gte-modernbert-base",
-        "dims": [768, 512, 256, 128, 64],
-        "mrl_native": True,
-        "trust_remote_code": True,
-        "query_prefix": None,
-        "doc_prefix": None,
-    },
-    "nomic_v15": {
-        "hf_id": "nomic-ai/nomic-embed-text-v1.5",
-        "dims": [768, 512, 256, 128, 64],
-        "mrl_native": True,
-        "trust_remote_code": True,
-        "query_prefix": "search_query",
-        "doc_prefix": "search_document",
-    },
-    "pplx_embed_v1_06b": {
-        "hf_id": "perplexity-ai/pplx-embed-v1-0.6b",
-        "dims": [1536, 768, 256, 128, 64],
-        "mrl_native": True,
-        "trust_remote_code": True,
-        "query_prefix": None,  # system prompts not used during training
-        "doc_prefix": None,
-    },
-}
+# We do this at the module level so the modal app configuration (e.g., volume, app)
+# can use the config values during deployment.
+try:
+    from src.models.finetune_config import load_config
+    CONFIG = load_config()
+except Exception as e:
+    # Handle the fact that this script might be evaluated within the Modal cloud
+    # environment where 'configs/finetune_modal.yaml' isn't initially present
+    # at module load time (it gets mounted later for the function).
+    print(f"Warning: Could not load config at module level: {e}")
+    CONFIG = None
 
-# Finetune hyperparams (matches finetune.yaml)
-FINETUNE_CFG = {
-    "epochs": 3,
-    "batch_size": 256,          # A10G handles this fine, no cap needed
-    "learning_rate": 2e-5,
-    "warmup_ratio": 0.1,
-    "weight_decay": 0.01,
-    "logging_steps": 50,
-    "save_steps": 500,          # More frequent on GPU (fast)
-    "save_total_limit": 2,
-    "mnrl_scale": 20.0,
-    "gradient_accumulation_steps": 1,
-    "dataloader_num_workers": 4,
-    "curriculum": [0.10, 0.30, 0.50],  # hard_neg_ratio per epoch
-    "seed": 42,
-}
+# Fallbacks for app definition in case config isn't available locally
+APP_NAME = getattr(CONFIG.modal, "app_name", "entity-resolution-finetune") if CONFIG else "entity-resolution-finetune"
+VOLUME_NAME = getattr(CONFIG.modal, "volume_name", "entity-resolution-checkpoints") if CONFIG else "entity-resolution-checkpoints"
+GPU = getattr(CONFIG.modal, "gpu", "A10G") if CONFIG else "A10G"
+TIMEOUT = getattr(CONFIG.modal, "timeout_min", 90) * 60 if CONFIG else 90 * 60
 
 # ---------------------------------------------------------------------------
 # Core training function (runs inside Modal container)
 # ---------------------------------------------------------------------------
 
 @app.function(
-    gpu="A10G",
+    gpu=GPU,
     timeout=TIMEOUT,
     volumes={str(CHECKPOINT_ROOT): volume},
     secrets=[
@@ -149,7 +127,7 @@ FINETUNE_CFG = {
 )
 def finetune_one(model_key: str, resume: bool = False) -> dict:
     """
-    Fine-tune a single embedding model on A10G.
+    Fine-tune a single embedding model.
     Returns a dict with training metrics and HF repo URL.
     """
     import json
@@ -164,13 +142,18 @@ def finetune_one(model_key: str, resume: bool = False) -> dict:
     from sentence_transformers import SentenceTransformer, SentenceTransformerTrainer
     from sentence_transformers.losses import MatryoshkaLoss, MultipleNegativesRankingLoss
     from sentence_transformers.training_args import SentenceTransformerTrainingArguments
+    from src.models.finetune_config import load_config
+    
     console = Console()
-    cfg = MODELS[model_key]
-    ft = FINETUNE_CFG
+    
+    # Load config from the mounted directory inside Modal
+    config = load_config("/configs/finetune_modal.yaml")
+    cfg = config.resolve(model_key)
+    
     hf_token = os.environ["HF_TOKEN"]
     os.environ["HF_HUB_DISABLE_XET"] = "1"
-
-    hf_output_repo = f"{HF_MODEL_PREFIX}-{model_key.replace('_', '-')}-pipe-ft"
+    
+    hf_output_repo = f"{config.hf_model_prefix}-{model_key.replace('_', '-')}-pipe-ft"
     checkpoint_dir = CHECKPOINT_ROOT / model_key
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
@@ -178,24 +161,18 @@ def finetune_one(model_key: str, resume: bool = False) -> dict:
 
     # ---- W&B init ----
     wandb.init(
-        project=WANDB_PROJECT,
-        entity=WANDB_ENTITY,
+        project=config.wandb_project,
+        entity=config.wandb_entity,
         name=f"{model_key}_pipe_ft",
-        config={
-            "model_key": model_key,
-            "hf_id": cfg["hf_id"],
-            "serialization": "pipe",
-            "gpu": GPU,
-            **ft,
-        },
+        config=cfg.model_dump(),
         resume="allow" if resume else None,
         tags=[model_key, "pipe", "matryoshka", "mnrl", "modal"],
     )
 
     # ---- Download triplets from HF Hub ----
-    console.print(f"[cyan]Downloading triplets from {HF_DATASET_REPO}...")
+    console.print(f"[cyan]Downloading triplets from {config.hf_dataset_repo}...")
     triplets_path = hf_hub_download(
-        repo_id=HF_DATASET_REPO,
+        repo_id=config.hf_dataset_repo,
         filename="triplets.parquet",
         repo_type="dataset",
         token=hf_token,
@@ -213,13 +190,13 @@ def finetune_one(model_key: str, resume: bool = False) -> dict:
             raise ValueError(f"Column '{col}' not found. Available: {triplets_df.columns}")
 
     # Apply nomic prefixes
-    if cfg["query_prefix"]:
-        prefix = cfg["query_prefix"] + ": "
+    if cfg.query_prefix:
+        prefix = cfg.query_prefix + ": "
         triplets_df = triplets_df.with_columns(
             (pl.lit(prefix) + pl.col(anchor_col)).alias(anchor_col)
         )
-    if cfg["doc_prefix"]:
-        prefix = cfg["doc_prefix"] + ": "
+    if cfg.doc_prefix:
+        prefix = cfg.doc_prefix + ": "
         triplets_df = triplets_df.with_columns(
             (pl.lit(prefix) + pl.col(positive_col)).alias(positive_col),
             (pl.lit(prefix) + pl.col(negative_col)).alias(negative_col),
@@ -252,8 +229,8 @@ def finetune_one(model_key: str, resume: bool = False) -> dict:
             "negative": combined[negative_col].to_list(),
         })
 
-    curriculum_ratios = ft["curriculum"]
-    seed = ft["seed"]
+    curriculum_ratios = cfg.curriculum
+    seed = cfg.seed
 
     # ---- Curriculum trainer subclass ----
     # NOTE: mutating trainer.train_dataset mid-training does NOT work -- HF Trainer
@@ -275,35 +252,28 @@ def finetune_one(model_key: str, resume: bool = False) -> dict:
             return super().get_train_dataloader()
 
     # ---- Load model ----
-    console.print(f"[bold cyan]Loading model: {cfg['hf_id']}...")
+    console.print(f"[bold cyan]Loading model: {cfg.hf_id}...")
     model = SentenceTransformer(
-        cfg["hf_id"],
-        trust_remote_code=cfg["trust_remote_code"],
+        cfg.hf_id,
+        trust_remote_code=cfg.trust_remote_code,
         token=hf_token,
     )
     console.print(f"[green]Model loaded. dim={model.get_sentence_embedding_dimension()}")
 
     # ---- Loss ----
-    inner_loss = MultipleNegativesRankingLoss(model=model, scale=ft["mnrl_scale"])
-    loss = MatryoshkaLoss(model=model, loss=inner_loss, matryoshka_dims=cfg["dims"])
-    console.print(f"[cyan]Loss: MatryoshkaLoss(MNRL) | dims={cfg['dims']}")
+    inner_loss = MultipleNegativesRankingLoss(model=model, scale=cfg.mnrl_scale)
+    loss = MatryoshkaLoss(model=model, loss=inner_loss, matryoshka_dims=cfg.dims)
+    console.print(f"[cyan]Loss: MatryoshkaLoss(MNRL) | dims={cfg.dims}")
 
     # ---- Epoch 1 dataset (also used as placeholder for trainer init) ----
     train_dataset = build_dataset(curriculum_ratios[0], seed=seed)
     console.print(f"[green]Initial dataset: {len(train_dataset):,} triplets")
 
     # ---- Training args ----
-    epochs = ft["epochs"]
-    is_pplx = model_key == "pplx_embed_v1_06b"
-    # pplx: 600M decoder -- batch=8, grad_accum=32, bf16, grad_checkpointing to fit A10G
-    batch_size = 8 if is_pplx else ft["batch_size"]
-    grad_accum = 32 if is_pplx else ft["gradient_accumulation_steps"]
-    use_bf16 = is_pplx  # bf16 safer for large decoder models; A10G supports it
-    use_grad_ckpt = is_pplx  # mandatory for 600M model to avoid OOM
     # warmup steps based on optimizer steps (accounts for grad_accum)
-    optimizer_steps_per_epoch = len(train_dataset) // (batch_size * grad_accum)
-    total_optimizer_steps = optimizer_steps_per_epoch * epochs
-    warmup_steps = max(1, int(total_optimizer_steps * ft["warmup_ratio"]))
+    optimizer_steps_per_epoch = len(train_dataset) // cfg.effective_batch_size
+    total_optimizer_steps = optimizer_steps_per_epoch * cfg.epochs
+    warmup_steps = max(1, int(total_optimizer_steps * cfg.warmup_ratio))
 
     # Check for existing checkpoint to resume from -- sort numerically not lexicographically
     resume_from = None
@@ -318,21 +288,21 @@ def finetune_one(model_key: str, resume: bool = False) -> dict:
 
     train_args = SentenceTransformerTrainingArguments(
         output_dir=str(checkpoint_dir),
-        num_train_epochs=epochs,
-        per_device_train_batch_size=batch_size,
-        learning_rate=ft["learning_rate"],
+        num_train_epochs=cfg.epochs,
+        per_device_train_batch_size=cfg.batch_size,
+        learning_rate=cfg.learning_rate,
         warmup_steps=warmup_steps,
-        weight_decay=ft["weight_decay"],
-        logging_steps=ft["logging_steps"],
-        save_steps=ft["save_steps"],
-        save_total_limit=ft["save_total_limit"],
-        seed=seed,
-        fp16=not use_bf16,
-        bf16=use_bf16,
-        dataloader_num_workers=ft["dataloader_num_workers"],
+        weight_decay=cfg.weight_decay,
+        logging_steps=cfg.logging_steps,
+        save_steps=cfg.save_steps,
+        save_total_limit=cfg.save_total_limit,
+        seed=cfg.seed,
+        fp16=cfg.fp16,
+        bf16=cfg.bf16,
+        dataloader_num_workers=cfg.dataloader_num_workers,
         dataloader_pin_memory=True,
-        gradient_accumulation_steps=grad_accum,
-        gradient_checkpointing=use_grad_ckpt,
+        gradient_accumulation_steps=cfg.grad_accum,
+        gradient_checkpointing=cfg.grad_checkpointing,
         report_to=["wandb"],
         load_best_model_at_end=False,
         run_name=f"{model_key}_pipe_ft",
@@ -351,9 +321,9 @@ def finetune_one(model_key: str, resume: bool = False) -> dict:
 
     # ---- Train ----
     console.print(
-        f"\n[bold green]Training: {model_key} | {epochs} epochs | "
-        f"batch={batch_size} x accum={grad_accum} (eff={batch_size * grad_accum}) | "
-        f"lr={ft['learning_rate']} | fp16={not use_bf16} bf16={use_bf16}"
+        f"\n[bold green]Training: {model_key} | {cfg.epochs} epochs | "
+        f"batch={cfg.batch_size} x accum={cfg.grad_accum} (eff={cfg.effective_batch_size}) | "
+        f"lr={cfg.learning_rate} | bf16={cfg.bf16}"
     )
     t_start = time.perf_counter()
     trainer.train(resume_from_checkpoint=resume_from)
@@ -374,7 +344,7 @@ def finetune_one(model_key: str, resume: bool = False) -> dict:
         folder_path=str(checkpoint_dir / "final"),
         repo_id=hf_output_repo,
         repo_type="model",
-        commit_message=f"Fine-tuned {cfg['hf_id']} on entity-resolution triplets (pipe, {epochs} epochs)",
+        commit_message=f"Fine-tuned {cfg.hf_id} on entity-resolution triplets (pipe, {cfg.epochs} epochs)",
     )
     hf_url = f"https://huggingface.co/{hf_output_repo}"
     console.print(f"[bold green]Model pushed -> {hf_url}")
@@ -382,19 +352,19 @@ def finetune_one(model_key: str, resume: bool = False) -> dict:
     # ---- Training manifest ----
     manifest = {
         "model_key": model_key,
-        "base_model": cfg["hf_id"],
+        "base_model": cfg.hf_id,
         "serialization": "pipe",
         "hf_repo": hf_output_repo,
         "hf_url": hf_url,
-        "epochs": epochs,
-        "batch_size": batch_size,
-        "learning_rate": ft["learning_rate"],
-        "matryoshka_dims": cfg["dims"],
+        "epochs": cfg.epochs,
+        "batch_size": cfg.batch_size,
+        "learning_rate": cfg.learning_rate,
+        "matryoshka_dims": cfg.dims,
         "triplet_count": len(triplets_df),
-        "curriculum_ratios": curriculum_ratios[:epochs],
+        "curriculum_ratios": curriculum_ratios[:cfg.epochs],
         "training_time_sec": round(training_time_sec, 2),
         "training_time_min": round(training_time_sec / 60, 2),
-        "gpu": GPU,
+        "gpu": getattr(config.modal, "gpu", "A10G"),
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     with open(checkpoint_dir / "training_manifest.json", "w") as f:
@@ -418,28 +388,26 @@ def finetune_one(model_key: str, resume: bool = False) -> dict:
 
 @app.local_entrypoint()
 def run_all():
-    """Launch all 5 models in parallel on Modal.
+    """Launch all configured models in parallel on Modal.
 
-    GPU allocation:
-      minilm_l6            -> A10G (22M params,  fast ~5min)
-      bge_small            -> A10G (33M params,  fast ~10min)
-      gte_modernbert_base  -> A10G (149M params, ~25min)
-      nomic_v15            -> A10G (137M params, ~25min)
-      pplx_embed_v1_06b   -> A10G (600M params, ~60min, fp16 batch=64)
-
-    All 5 run simultaneously. Total wall time ~ 60min. Cost ~$5-7.
+    GPU allocation: defined in configs/finetune_modal.yaml
     """
-    targets = list(MODELS.keys())
+    if not CONFIG:
+        print("Error: Could not load config. Cannot run_all().")
+        return
+
+    targets = CONFIG.model_keys
     print(f"Launching {len(targets)} parallel fine-tune jobs: {targets}")
-    print(f"W&B project: {WANDB_PROJECT} | HF prefix: {HF_MODEL_PREFIX}")
-    print("Monitor at: https://wandb.ai/jayshah5696/entity-resolution-poc")
+    print(f"W&B project: {CONFIG.wandb_project} | HF prefix: {CONFIG.hf_model_prefix}")
+    print(f"Monitor at: https://wandb.ai/{CONFIG.wandb_entity}/{CONFIG.wandb_project}")
     print()
 
-    # starmap launches all 5 simultaneously
+    # starmap launches all targets simultaneously
     # return_exceptions=True: one failure does NOT cancel other jobs
     results = list(finetune_one.starmap(
         [(key, False) for key in targets],
         return_exceptions=True,
+        wrap_returned_exceptions=False,
     ))
 
     print("\n" + "=" * 60)

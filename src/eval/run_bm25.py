@@ -39,7 +39,6 @@ from rich.console import Console
 from rich.table import Table
 from tqdm import tqdm
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.eval.metrics import aggregate_metrics, compute_metrics
 
@@ -76,7 +75,7 @@ def _eval_one(
     retrieved_ids: list[str],
     top_k: int,
 ) -> dict:
-    return compute_metrics(retrieved_ids, ground_truth_id, ks=[5, 10])
+    return compute_metrics(retrieved_ids, ground_truth_id)
 
 
 # ---------------------------------------------------------------------------

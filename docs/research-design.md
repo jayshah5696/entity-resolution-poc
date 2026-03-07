@@ -153,120 +153,28 @@ Matryoshka Representation Learning trains a single model such that the first 64 
 
 ## 4. Dataset Design
 
-### Base profile generation
+> **Full spec:** See `docs/dataset-design.md` for schema, corruption types, quality pipeline, triplet format, and eval set construction.
 
-- Tool: Faker (Python), locale-aware
-- Scale: 1.2M unique profiles; 1M for index, 200K for triplet sourcing, 10K for eval
-- Schema: first_name, last_name, company, email, country
-- Country distribution: 60% USA (reflects B2B reality)
-- Email: 70% work email (`f.last@company.com`), 30% personal
-
-### Quality pipeline (7 steps)
-
-Each record passes through before entering training or eval:
-
-1. **Deduplication.** Exact dedupe on email. Near-dedupe on (first_name, last_name, company) using Levenshtein distance < 2.
-2. **Email validation.** Well-formed regex. Domain must be in valid domain list or follow `<company_slug>.com` pattern.
-3. **Name validation.** At least 2 characters. No all-numeric names.
-4. **Company normalization.** Strip legal suffixes (Inc., LLC, Ltd.) to create canonical form for near-duplicate detection.
-5. **Country canonicalization.** Map all country inputs to ISO 3166-1 alpha-3. Filter to distribution countries.
-6. **Cross-field consistency check.** Email domain must loosely match company name (edit distance or known-domain check).
-7. **Triplet validity assertion.** For each (anchor, positive, negative): assert anchor != positive by ID, assert corruption was applied to anchor, assert negative is not the true match.
-
-### Corruption types
-
-| Type | Prob | Fields | Example |
-|------|------|--------|---------|
-| abbreviation | 0.15 | first_name | Jonathan -> Jon |
-| truncation | 0.10 | last_name, company | Smith -> Smi |
-| levenshtein_1 | 0.20 | first_name, last_name | Smith -> Smyth |
-| levenshtein_2 | 0.10 | first_name, last_name, company | Jonathan -> Johnathen |
-| field_drop_single | 0.20 | any | email dropped |
-| field_drop_double | 0.10 | any two | email + company dropped |
-| domain_swap | 0.10 | email | @google.com -> @gmail.com |
-| company_abbrev | 0.05 | company | Google Inc -> Goog |
-| case_mutation | 0.05 | first_name, last_name, company | JOHN SMITH |
-| nickname | 0.05 | first_name | William -> Bill |
-
-See `docs/dataset-design.md` for full specs and `src/data/corrupt.py` for implementation.
-
-### Hard negative mining
-
-**Round 1 (structural):** For each anchor, find profiles sharing the first 4 characters of company name but with a different last name. "Same company, different person" -- realistic confusion cases.
-
-**Round 2 (BM25-mined):** Run BM25 against the full index, take top-50 non-match results. High-overlap records that a lexical model already finds confusing -- exactly what the dense model needs to discriminate.
+**Summary:** 1.2M synthetic profiles → 1M index, 200K triplet source, 10K eval queries (6 corruption buckets × ~1,667). 10 corruption types with curriculum hard negatives (same-company prefix + BM25-mined). Two serialization formats: pipe (compact, positional) and KV (self-describing).
 
 ---
 
-## 5. Serialization Formats
+## 5. Model Roster
 
-Records are serialized to a single string before embedding. How this is done determines what signals are available to the model.
+> **Full details:** See `UNDERSTANDING.md` §4 for model table, inference quirks, and critical model notes.
 
-### Pipe format
-
-```
-Jonathan Smith | Google Inc | jonathan.smith@google.com | USA
-```
-
-Missing field (slot preserved):
-```
- | Smith | Google Inc | jonathan.smith@google.com | USA
-```
-
-Two fields missing:
-```
- | Smith |  | jonathan.smith@google.com | USA
-```
-
-Field order is a positional signal. After fine-tuning, the model knows position-0 is always name, position-1 is company, etc. Compact -- fewer tokens than KV.
-
-### KV format
-
-```
-fn:Jonathan ln:Smith org:Google Inc em:jonathan.smith@google.com co:USA
-```
-
-Missing field:
-```
-fn: ln:Smith org:Google Inc em:jonathan.smith@google.com co:USA
-```
-
-Self-describing. Zero-shot models can leverage field labels from web pre-training. More verbose than pipe -- longer token sequences, potential truncation concerns at very long values.
-
-### Expected result
-
-Post fine-tuning: pipe wins (model learns structure, saves tokens). Zero-shot: KV wins (labels reduce ambiguity). The experiments confirm or deny this.
-
-See `src/data/serialize.py` and `tests/test_serialize.py`.
+| Model | Params | Role | Fine-tune? |
+|-------|--------|------|------------|
+| BM25 | — | Baseline | No |
+| all-MiniLM-L6-v2 | 22M | Floor | No |
+| bge-small-en-v1.5 | 33M | Efficiency story | Yes |
+| gte-modernbert-base | 149M | Primary ★ | Yes |
+| nomic-embed-text-v1.5 | 137M | MRL reference | Yes |
+| pplx-embed-v1-0.6b | 600M | SOTA ceiling | No (zero-shot) |
 
 ---
 
-## 6. Model Roster
-
-| Model | Params | Dims | MRL | License | MTEB Retrieval | Mode |
-|-------|--------|------|-----|---------|----------------|------|
-| BM25 | -- | -- | -- | Apache | -- | baseline |
-| all-MiniLM-L6-v2 | 22M | 384 | No | Apache | 56.3 | zero-shot |
-| bge-small-en-v1.5 | 33M | 384 | via FT | MIT | ~58 | zero-shot + fine-tune |
-| gte-modernbert-base | 149M | 768 | Yes | Apache | 66.4 | zero-shot + fine-tune |
-| nomic-embed-text-v1.5 | 137M | 768 | Yes | Apache | 62.3 | zero-shot + fine-tune |
-| pplx-embed-v1-0.6b | 600M | 1536 | Yes | Apache | 62.41 | zero-shot |
-
-**Primary fine-tune target: gte-modernbert-base.** Best MTEB-per-parameter of any model under 200M as of early 2025. ModernBERT backbone (RoPE, Flash Attention). MRL native. Short structured text is its sweet spot.
-
-**nomic-v1.5** is the MRL reference point. Fine-tuned nomic vs fine-tuned gte-modernbert isolates architecture sensitivity. Important: must prepend `search_query:` to queries and `search_document:` to docs at inference -- dropping these loses 3-5% recall.
-
-**bge-small** (33M, MIT) is the narrative model: proves a tiny MIT-licensed model fine-tuned on entity triplets beats BM25. The production argument -- you don't need large models, you need the right training data.
-
-**pplx-embed-v1-0.6b** (600M) is the SOTA ceiling as of March 2026, #1 MTEB Retrieval among all models under 1B. Zero-shot only on M3 Pro -- too large to fine-tune on this hardware. If fine-tuned bge-small approaches pplx zero-shot, the training-data argument is proven.
-
-**all-MiniLM-L6-v2** is the floor -- shows that off-the-shelf small models fail on entity resolution before any fine-tuning.
-
-See `docs/model-lock.md` for inference quirks per model and quantization dimensions.
-
----
-
-## 7. Ablation Plan
+## 6. Ablation Plan
 
 ### Tier 1 -- must run (core hypotheses)
 
@@ -297,58 +205,15 @@ See `docs/model-lock.md` for inference quirks per model and quantization dimensi
 
 ---
 
-## 8. Evaluation Protocol
+## 7. Evaluation Protocol
 
-### Metrics
+> **Full spec:** See `docs/evaluation-protocol.md` for metric definitions, per-bucket descriptions, index construction params, latency methodology, result storage format, and statistical significance analysis.
 
-All metrics computed per (bucket, top-K, model).
-
-**Recall@K:** Is the true match in the top-K results?
-```
-Recall@K = (1/|Q|) x sum_q 1[true_match(q) in top_K(q)]
-```
-Primary metric -- directly measures retrieval success for entity resolution.
-
-**MRR@K:** Mean Reciprocal Rank. Rewards rank 1 over rank 10.
-```
-MRR@K = (1/|Q|) x sum_q (1 / rank(true_match(q))) if rank <= K, else 0
-```
-
-**NDCG@K:** Normalized Discounted Cumulative Gain. Standard IR metric, included for comparability with published work.
-
-**Precision@K:** Since each query has exactly one true match, Precision@K = Recall@K / K. Useful for understanding result density.
-
-### Six evaluation buckets
-
-| Bucket | Corruption | Tests |
-|--------|------------|-------|
-| pristine | None | Baseline recall on clean data |
-| missing_firstname | first_name dropped | Partial record, name-only drop |
-| missing_email_company | email + company dropped | Severe partial (2 fields gone) |
-| typo_name | Levenshtein-1/2 on first or last name | Typo robustness |
-| domain_mismatch | Email domain swapped to personal domain | Email domain confusion |
-| swapped_attributes | first_name and last_name swapped | Schema confusion |
-
-### Index construction
-
-FAISS HNSW settings:
-- M=32, efConstruction=200 for build
-- efSearch=100 at query time
-- Metric: inner product on L2-normalized vectors (equivalent to cosine)
-
-### Latency measurement
-
-1. Build index on full n_index records
-2. Serialize + embed all 1000 latency test queries
-3. Run 100 warmup queries (discarded)
-4. Run 1000 measured queries
-5. Record per-query wall-clock time (`time.perf_counter()`)
-6. Report p50, p95, p99 in milliseconds
-7. Repeat 3 runs, take median of medians
+**Metrics:** Recall@K (primary), MRR@K, NDCG@K, Precision@K — computed per (bucket, top-K, model). Six eval buckets (pristine, missing_firstname, missing_email_company, typo_name, domain_mismatch, swapped_attributes).
 
 ---
 
-## 9. Weekend Execution Timeline
+## 8. Weekend Execution Timeline
 
 ### Saturday AM (4h): Data + BM25 baseline
 
@@ -389,7 +254,7 @@ FAISS HNSW settings:
 
 ---
 
-## 10. Expected Outcomes and Monday Story
+## 9. Expected Outcomes and Monday Story
 
 ### Expected numbers
 

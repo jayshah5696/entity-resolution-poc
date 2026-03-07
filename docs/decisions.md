@@ -109,9 +109,9 @@ This is what gets shared on Monday.
 Date: 2026-03
 Status: Accepted
 
-Decision: Each model has different inference requirements. These are stored in configs/models.yaml (machine-readable) and docs/inference-guide.md (human-readable). The encoder wrapper (src/models/encoder.py) reads from configs/models.yaml and applies them automatically. No hardcoded model-specific logic in eval scripts.
+Decision: Each model has different inference requirements. These are stored in configs/models.yaml (machine-readable) and UNDERSTANDING.md (human-readable). The encoder wrapper (src/models/encoder.py) reads from configs/models.yaml and applies them automatically. No hardcoded model-specific logic in eval scripts.
 
-See docs/inference-guide.md for full per-model details.
+See UNDERSTANDING.md for full per-model details.
 
 ---
 
