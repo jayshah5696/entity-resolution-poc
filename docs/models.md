@@ -1,454 +1,183 @@
-# Model Roster: Deep-Dive Reference
+# Model Roster
 
-**Project:** entity-resolution-poc
-**Purpose:** Architecture-level reference for all models under evaluation.
+Complete analysis of all embedding models evaluated in this research. All selected models are Apache 2.0 or MIT licensed with open weights.
 
----
+## Quick Comparison Table
 
-## Comparison Table
-
-| Model | Params | Native Dims | MRL Native | License | MTEB Avg | Max Seq Len | Architecture |
-|-------|--------|-------------|------------|---------|----------|-------------|--------------|
-| BM25 (rank_bm25) | — | — | — | MIT | — | ∞ | Lexical/TF-IDF |
-| nomic-embed-text-v1.5 | 137M | 768 | Yes | Apache2 | 62.28 | 8192 | ModernBERT |
-| bge-small-en-v1.5 | 33M | 384 | No | MIT | 51.68 | 512 | BERT-small |
-| bge-base-en-v1.5 | 109M | 768 | No | MIT | 53.25 | 512 | BERT-base |
-| mxbai-embed-large-v1 | 335M | 1024 | Yes | Apache2 | 64.68 | 512 | RoBERTa-large |
-| all-MiniLM-L6-v2 | 22M | 384 | No | Apache2 | 44.54 | 256 | MiniLM-L6 |
-| gte-modernbert-base | 149M | 768 | Yes | Apache2 | 63.48 | 8192 | ModernBERT |
-| arctic-embed-m-v1.5 | 109M | 768 | Yes | Apache2 | 57.24 | 512 | BERT-based |
-
-**MRL Native:** Does the base pre-trained checkpoint already support Matryoshka sub-embeddings? If Yes, sub-dims are immediately usable without fine-tuning. If No, MRL must be trained from scratch with MRL wrapper.
-
-**MTEB Avg:** MTEB English benchmark average score. Higher is better general-purpose embedding quality. Note: MTEB is NOT entity resolution-specific — a lower MTEB score doesn't mean worse entity resolution performance after fine-tuning.
+| Model | Params | Dims | License | MRL Native | MTEB Avg | Released | Notes |
+|-------|--------|------|---------|-----------|----------|----------|-------|
+| BM25 | — | — | Apache | — | baseline | — | Lexical floor |
+| all-MiniLM-L6-v2 | 22M | 384 | Apache | No | 56.3 | 2021 | Floor baseline only |
+| bge-small-en-v1.5 | 33M | 384 | MIT | No (add via FT) | ~62 | 2024 | Smallest production model |
+| granite-embedding-30m | 30M | 768 | MIT | No | ~58 | 2025-Q1 | Ultra-small reference |
+| granite-embedding-125m | 125M | 768 | Apache | No | ~61 | 2025-Q1 | IBM enterprise quality |
+| bge-base-en-v1.5 | 109M | 768 | MIT | No (add via FT) | 64.3 | 2024 | Solid MIT baseline |
+| nomic-embed-text-v1.5 | 137M | 768 | Apache | YES | 62.3 | 2024-02 | MRL baked in |
+| snowflake-arctic-embed-m-v1.5 | 109M | 768 | Apache | YES | 64.6 | 2024-Q4 | MRL is core design |
+| nomic-embed-text-v2-moe | 475M (137M active) | 768 | Apache | YES | ~63 | 2025-Q1 | MoE efficiency |
+| **gte-modernbert-base** | **149M** | **768** | **Apache** | **YES** | **66.4** | **2025-01** | **TOP PICK** |
+| mxbai-embed-large-v1 | 335M | 1024 | Apache | YES | 64.7 | 2024-Q1 | Quality ceiling |
 
 ---
 
-## 1. BM25 Baseline
+## The Perplexity AI Situation
 
-### Overview
+Jay mentioned Perplexity released an embedding model "last week." After a thorough research sweep:
 
-BM25 (Best Match 25) is a probabilistic retrieval function derived from the BM (Best Match) family of ranking functions. It is the standard lexical baseline for all retrieval tasks.
+**Perplexity AI has NOT released an open-source embedding model.**
 
-**Library:** `rank_bm25` (Python) — `BM25Okapi` implementation
+What they actually have:
+- `perplexity-ai/r1-1776` on HuggingFace — a DeepSeek-R1 reasoning fine-tune (language model, MIT, released Feb 2025). NOT an embedding model.
+- A proprietary embedding endpoint in their Sonar API, model internally referenced as "r-embed-v1" in some API examples. API-only, closed weights, no public specs for dimensions or architecture.
 
-### Algorithm
-
-Given a query Q with terms {q₁, q₂, ..., qₙ} and a document D in corpus C:
-
-```
-Score(D, Q) = Σᵢ IDF(qᵢ) × [f(qᵢ, D) × (k₁ + 1)] / [f(qᵢ, D) + k₁ × (1 - b + b × |D| / avgdl)]
-
-Where:
-  f(qᵢ, D) = term frequency of qᵢ in D
-  |D|       = document length in tokens
-  avgdl     = average document length across corpus
-  k₁        = 1.5 (term frequency saturation)
-  b         = 0.75 (length normalization)
-  IDF(qᵢ)  = log((N - n(qᵢ) + 0.5) / (n(qᵢ) + 0.5))
-```
-
-### Parameters Used
-
-| Parameter | Value | Effect |
-|-----------|-------|--------|
-| k1 | 1.5 | Controls term frequency saturation. Lower = faster saturation. |
-| b | 0.75 | Controls length normalization. 0 = no normalization, 1 = full. |
-| tokenization | whitespace + lowercase | Preserves dots (email local parts), @ symbol as a sub-token effect |
-
-### Strengths for This Task
-
-- Exact token match: If query says "Google" and index says "Google", high score — perfect for pristine records.
-- Fast: O(1) per token after inverted index construction. Extremely low latency.
-- No model needed: No GPU, no download, no warmup time.
-- Interpretable: Score decomposition is fully transparent.
-
-### Weaknesses for This Task
-
-- Zero-overlap = zero-score: "Jon" vs "Jonathan" → 0 overlap → 0 contribution. Abbreviations destroy recall.
-- Typo blindness: "Smyth" vs "Smith" → different tokens, no credit.
-- No field semantics: BM25 doesn't know that "first_name: Jon" and "first_name: Jonathan" are semantically similar — it treats "first_name" as just another token.
-- Short document issues: At 5-field records (typically 8-25 tokens), length normalization is noisy. avgdl is small, variance is high.
-- Missing field problem: `[MISSING]` becomes a high-IDF token (rare in corpus → high weight) — but it's a marker, not semantically meaningful. Queries with many `[MISSING]` tokens get dominated by this token in scoring.
-
-### Expected Performance
-
-| Bucket | Expected R@1 |
-|--------|-------------|
-| pristine | 0.82-0.88 |
-| missing_firstname | 0.60-0.70 |
-| missing_email_company | 0.10-0.20 |
-| typo_name | 0.30-0.40 |
-| domain_mismatch | 0.50-0.60 |
-| swapped_attributes | 0.05-0.15 |
+**Verdict**: Excluded. Cannot download weights, cannot reproduce, cannot compare. If they open-source it later, add it to this roster.
 
 ---
 
-## 2. nomic-embed-text-v1.5
+## Primary Candidates (Deep Dive)
 
-### Overview
+### gte-modernbert-base — TOP PICK
+**HuggingFace**: `Alibaba-NLP/gte-modernbert-base`  
+**Released**: January 2025  
+**Params**: 149M | **Dims**: 768 | **License**: Apache 2.0  
+**MRL Native**: Yes | **MTEB Avg**: 66.4  
 
-Produced by Nomic AI, nomic-embed-text-v1.5 is a ModernBERT-based text embedding model with native Matryoshka Representation Learning support. It is the **primary fine-tuning target** for this research.
+Architecture: Built on ModernBERT — the first major BERT re-architecture since 2019. Key improvements:
+- Rotary position embeddings (RoPE) instead of absolute positions → better at arbitrary token positions
+- Flash Attention 2 → 2-4x faster than standard attention at same params
+- 8192 token context (overkill for entity records, but means no truncation ever)
+- Alternating local + global attention → efficient for short text (our use case)
 
-**HuggingFace:** `nomic-ai/nomic-embed-text-v1.5`
-**License:** Apache 2.0
-**Params:** 137M
-**Architecture:** ModernBERT encoder (rotary position embeddings, Flash Attention 2, efficient attention)
+Why it wins for entity resolution specifically:
+- Character-level tokenization (WordPiece on ModernBERT vocab) is well-calibrated for name variations
+- Bidirectional attention = full field-to-field awareness in a single record string
+- Short text (entity records are 10-30 tokens) is where ModernBERT's local attention is fastest
+- MRL means we can compress to 64D for HNSW first-stage retrieval without a separate training run
+- Best MTEB/param ratio of any 2025 model under 200M params
 
-### Architecture Details
-
-ModernBERT replaces traditional BERT attention with:
-- **Rotary Position Embeddings (RoPE):** Better handling of position information; extends naturally to long sequences (up to 8192 tokens).
-- **Flash Attention 2:** Memory-efficient attention implementation; enables larger batch sizes.
-- **Alternating local/global attention:** Every other layer uses local attention (window=128 tokens) rather than full global attention, reducing compute on long sequences.
-- **Removed token type embeddings:** Simplified architecture, standard for modern encoders.
-- **Trained with MRL:** The model was trained with Matryoshka loss during pre-training, so sub-vectors (first 64 dims, first 128 dims, etc.) are immediately meaningful without additional training.
-
-### Embedding Dimensions (MRL)
-
-| Dims | Quality (relative) | Memory per 1M vecs |
-|------|-------------------|-------------------|
-| 768 | 100% (reference) | 3.07 GB (FP32) |
-| 512 | ~98.5% | 2.05 GB |
-| 256 | ~96% | 1.02 GB |
-| 128 | ~92% | 0.51 GB |
-| 64 | ~86% | 0.26 GB |
-
-*Quality estimates from Nomic's ablation on BEIR benchmark — actual task performance may vary.*
-
-### Why This Model for Entity Resolution
-
-1. **Native MRL:** Sub-vectors are immediately usable. We can use 64-dim for Stage 1 ANN and 768-dim for Stage 2 re-rank without any additional training for MRL (though our fine-tuning will further optimize the MRL structure for our schema).
-
-2. **Long context window (8192):** Our records are at most ~50 tokens. No truncation issues, ever. This matters when we serialize records with verbose key-value format.
-
-3. **Strong starting point (MTEB 62.28):** A good zero-shot baseline before fine-tuning means we need fewer training samples to reach peak performance.
-
-4. **Active development + good ST integration:** Well-supported by `sentence-transformers`, which is our training framework.
-
-5. **Apache2 license:** No restrictions on commercial deployment.
-
-### Trust Remote Code
-
-Nomic models require `trust_remote_code=True` when loading. This is expected — the custom modeling code adds the RoPE modifications. Code should be reviewed before production deployment.
-
-### Strengths for Entity Resolution
-
-- Long context window handles verbose records without truncation
-- Native MRL ideal for two-stage architecture
-- Strong semantic understanding for abbreviation/typo robustness
-- `[MISSING]` tokens are interpretable as OOV-ish tokens, not noise
-
-### Weaknesses for Entity Resolution
-
-- Slightly larger than bge-base (137M vs 109M) — slower inference on MPS
-- `trust_remote_code=True` required — slight security consideration for production
-- Overkill seq_len for our 5-field records (8192 >> 50 tokens) but no performance downside
+Weaknesses: Slightly larger than bge-small. ModernBERT is newer so less community fine-tuning knowledge.
 
 ---
 
-## 3. bge-small-en-v1.5
+### nomic-embed-text-v1.5 — MRL REFERENCE
+**HuggingFace**: `nomic-ai/nomic-embed-text-v1.5`  
+**Released**: February 2024  
+**Params**: 137M | **Dims**: 768 | **License**: Apache 2.0  
+**MRL Native**: Yes | **MTEB Avg**: 62.3  
 
-### Overview
+The original open-source MRL model. MRL was trained into the model from the start (not post-hoc), meaning the first 64 dimensions are genuinely a good embedding, not a truncated bad one.
 
-BAAI's BGE-small is a compact BERT-small encoder intended for efficient inference. Part of the BGE (BAAI General Embedding) family.
+Important quirk: Requires `search_query:` prefix on queries and `search_document:` prefix on documents at inference time. If you skip this, recall drops ~3-5%. Must be consistent in training and eval.
 
-**HuggingFace:** `BAAI/bge-small-en-v1.5`
-**License:** MIT
-**Params:** 33M
-**Architecture:** BERT-small (12 layers → 6 layers, 512 hidden → 384 hidden)
-
-### Architecture Details
-
-Standard BERT architecture with reduced depth (6 layers) and width (384 hidden dims). Trained with:
-- Contrastive learning on a large text corpus
-- Hard negative mining
-- Knowledge distillation from larger BGE models
-
-No native MRL support. If MRL is desired, the MRL wrapper must be applied during fine-tuning, adding additional loss terms.
-
-### Use Case in This Research
-
-**Speed/quality tradeoff baseline.** At 33M params, this model is ~4× smaller than nomic v1.5 and should be ~4× faster at inference. If its post-fine-tuning quality is comparable to larger models, it's a strong production choice for latency-sensitive deployments.
-
-### Embedding Dimensions
-
-Native: 384. MRL would target [384, 256, 128, 64].
-
-### MTEB Score
-
-51.68 — lower than nomic/bge-base. Reflects smaller model capacity.
-
-### Strengths for Entity Resolution
-
-- Very fast inference (33M params, 384-dim output)
-- MIT license (most permissive)
-- Well-studied — lots of prior art on this architecture
-- Low memory footprint for the full-precision index
-
-### Weaknesses for Entity Resolution
-
-- Smaller model = less capacity to learn corruption patterns
-- No native MRL — additional training overhead
-- 384-dim max (vs 768-dim for larger models) limits maximum representational quality
-- 512 max seq len — fine for our records, but tighter than nomic/gte
+Why include alongside gte-modernbert: It's the established MRL baseline. Fine-tuning it creates a clean before/after comparison. Also 137M vs 149M — nearly identical cost, different architecture. The diff in results tells you something about architecture sensitivity.
 
 ---
 
-## 4. bge-base-en-v1.5
+### snowflake-arctic-embed-m-v1.5 — MRL DESIGNED FOR RETRIEVAL
+**HuggingFace**: `Snowflake/snowflake-arctic-embed-m-v1.5`  
+**Released**: Q4 2024  
+**Params**: 109M | **Dims**: 768 | **License**: Apache 2.0  
+**MRL Native**: Yes | **MTEB Avg**: 64.6  
 
-### Overview
-
-BAAI's BGE-base, the standard-size member of the BGE family. Direct comparison target vs nomic-embed-v1.5 at approximately the same parameter count.
-
-**HuggingFace:** `BAAI/bge-base-en-v1.5`
-**License:** MIT
-**Params:** 109M
-**Architecture:** BERT-base (12 layers, 768 hidden dims)
-
-### Architecture Details
-
-Standard BERT-base architecture. Trained with:
-- Contrastive learning on a large text corpus including MS-MARCO, NLI datasets, and web-crawled pairs
-- Hard negative mining (likely BM25-mined negatives from MS-MARCO)
-- Self-distillation from BGE-large
-
-No native MRL. MRL wrapper required for fine-tuning with MRL.
-
-### Use Case in This Research
-
-**Architecture comparison vs nomic-embed-v1.5.** Both are ~109-137M params with 768-dim output. BGE-base uses traditional BERT (sinusoidal position embeddings, no Flash Attention), while nomic uses ModernBERT (RoPE, Flash Attention). This comparison tests whether the architectural improvements in ModernBERT translate to better entity resolution.
-
-### Strengths for Entity Resolution
-
-- Well-calibrated 768-dim embeddings
-- MIT license
-- Strong MTEB for its size class
-- No `trust_remote_code` required
-
-### Weaknesses for Entity Resolution
-
-- No native MRL — must train MRL from scratch (higher fine-tuning cost)
-- Traditional BERT attention — less efficient for long sequences (though our sequences are short)
-- 512 max seq len — sufficient for our records
+Snowflake trained this specifically for retrieval pipelines where dimension reduction is needed. The MRL implementation is reportedly among the cleanest — dimension compression causes less recall drop than other models. Good for the quantization ablation experiment.
 
 ---
 
-## 5. mxbai-embed-large-v1
+### nomic-embed-text-v2-moe — MoE EFFICIENCY
+**HuggingFace**: `nomic-ai/nomic-embed-text-v2-moe`  
+**Released**: Q1 2025  
+**Params**: 475M total, ~137M active | **Dims**: 768 | **License**: Apache 2.0  
+**MRL Native**: Yes | **MTEB Avg**: ~63  
 
-### Overview
+Mixture of Experts architecture: 8 experts, only 2 active per token at inference. Net compute ≈ 137M params despite 475M stored. Interesting data point: does MoE help entity resolution where different experts might specialize in name vs company vs email tokens?
 
-Mixedbread AI's flagship embedding model based on RoBERTa-large. The largest model in this roster and the MTEB leader among our candidates.
-
-**HuggingFace:** `mixedbread-ai/mxbai-embed-large-v1`
-**License:** Apache 2.0
-**Params:** 335M
-**Architecture:** RoBERTa-large (24 layers, 1024 hidden dims)
-
-### Architecture Details
-
-RoBERTa-large is a robustly trained BERT variant:
-- 24 transformer layers (vs 12 in BERT-base)
-- 1024 hidden dimensions (vs 768)
-- Dynamic masking for MLM pre-training
-- Trained on more data with larger batches than original BERT
-
-Mixedbread fine-tuned this with:
-- Native MRL training with Matryoshka loss
-- Multiple Negatives Ranking Loss on large-scale retrieval datasets
-- MRL dimensions: [1024, 512, 256, 128, 64]
-
-### Use Case in This Research
-
-**Quality ceiling.** At 335M params, this is the most expensive but potentially highest quality model. If fine-tuned nomic-embed-v1.5 (137M) matches or beats it, we have an excellent efficiency story. If mxbai-large is significantly better, it guides the production model choice.
-
-**Note:** Fine-tuning this model on MPS with batch_size=256 may cause OOM. Reduce to batch_size=64-128 if needed.
-
-### Strengths for Entity Resolution
-
-- Highest MTEB score in roster (64.68)
-- Largest capacity — best at learning subtle disambiguation
-- Native MRL — all sub-dims work immediately
-- RoBERTa-large is the dominant architecture for many retrieval benchmarks
-
-### Weaknesses for Entity Resolution
-
-- 335M params = slow inference (~2.5× nomic-v1.5)
-- 1024-dim output makes FP32 index larger (1024/768 = 33% more memory)
-- Fine-tuning expensive (time + memory)
-- 512 max seq len (fine for our use case)
+Caveat: 475M param storage on M3 Pro is fine (model fits in memory) but fine-tuning all experts is expensive. Likely treat this as zero-shot eval only or LoRA fine-tune.
 
 ---
 
-## 6. all-MiniLM-L6-v2
+### bge-small-en-v1.5 — THE EFFICIENCY STORY
+**HuggingFace**: `BAAI/bge-small-en-v1.5`  
+**Released**: Q1 2024  
+**Params**: 33M | **Dims**: 384 | **License**: MIT  
+**MRL Native**: No (add via MatryoshkaLoss during fine-tuning)  
 
-### Overview
+The narrative model. At 33M params with MIT license, if fine-tuning on entity triplets gets this to competitive recall against BM25, that's the production argument: you don't need a large model, you need the right training data. This is the model that makes the Monday story land.
 
-The ubiquitous sentence-transformers reference model. Highly optimized for speed.
-
-**HuggingFace:** `sentence-transformers/all-MiniLM-L6-v2`
-**License:** Apache 2.0
-**Params:** 22M
-**Architecture:** MiniLM-L6 (6 layers, 384 hidden dims via knowledge distillation)
-
-### Architecture Details
-
-Knowledge-distilled from a larger model (MiniLM-L12) using a teacher-student setup:
-- 6 transformer layers (vs 12 in BERT-base)
-- 384 hidden dimensions
-- Trained on 1 billion sentence pairs
-- Distillation preserves attention distributions from larger model
-
-**Known limitation:** 256 max sequence length. Fine for our 5-field records but worth noting.
-
-### Use Case in This Research
-
-**Lower bound reference.** This is the model you use when you need something fast and don't care too much about quality. If our fine-tuned approach can't beat zero-shot MiniLM-L6 on a specialized task, something is fundamentally wrong with the approach.
-
-### Strengths for Entity Resolution
-
-- Extremely fast (22M params, 384-dim)
-- Very well-studied — huge amount of prior work
-- No trust remote code requirement
-- Can embed 1M records in minutes, not hours
-
-### Weaknesses for Entity Resolution
-
-- 256 max seq len (our records are typically <50 tokens, so fine)
-- No MRL support
-- 22M params may not have enough capacity for complex corruption patterns
-- MTEB 44.54 — significantly below the 60+ range of larger models
-
----
-
-## 7. gte-modernbert-base
-
-### Overview
-
-Alibaba DAMO Academy's GTE (General Text Embeddings) model built on ModernBERT. A strong competitor to nomic-embed-v1.5 using the same underlying architecture.
-
-**HuggingFace:** `Alibaba-NLP/gte-modernbert-base`
-**License:** Apache 2.0
-**Params:** 149M
-**Architecture:** ModernBERT encoder (same as nomic-embed-v1.5 base architecture)
-
-### Architecture Details
-
-Shares the ModernBERT architecture with nomic-embed-v1.5:
-- Rotary Position Embeddings (RoPE)
-- Flash Attention 2
-- Alternating local/global attention
-- 8192 token context window
-- Native Matryoshka training during pre-training
-
-**Key difference from nomic:** Alibaba's training data and training recipe. GTE models have historically been strong on retrieval benchmarks and are widely used in production.
-
-### Use Case in This Research
-
-**Direct architectural comparison vs nomic-embed-v1.5.** Both use ModernBERT, similar param count, similar dims. The difference is the pre-training corpus and fine-tuning recipe. This isolates the effect of pre-training data choices on downstream entity resolution quality.
-
-### MTEB Score
-
-63.48 — marginally higher than nomic-embed-v1.5 (62.28) on general benchmarks. Interesting to see if this translates to better entity resolution.
-
-### Strengths for Entity Resolution
-
-- Same ModernBERT architecture as nomic → same efficiency benefits
-- Slightly higher MTEB ceiling
-- 8192 context window
-- Native MRL
-- Apache2 license
-
-### Weaknesses for Entity Resolution
-
-- Slightly larger (149M vs 137M for nomic) — negligible difference in practice
-- Less community deployment experience than nomic in sentence-transformers ecosystem
-- May require model-specific pooling configuration
-
----
-
-## 8. snowflake-arctic-embed-m-v1.5
-
-### Overview
-
-Snowflake's arctic-embed-m is explicitly designed for production retrieval workloads. Interesting addition because Snowflake is itself a data platform company and may have optimized for structured data retrieval patterns.
-
-**HuggingFace:** `Snowflake/snowflake-arctic-embed-m-v1.5`
-**License:** Apache 2.0
-**Params:** 109M
-**Architecture:** BERT-based (modified for retrieval; specific architecture not fully disclosed)
-
-### Architecture Details
-
-Based on a BERT-style encoder with Snowflake's proprietary retrieval-focused modifications:
-- Trained on curated retrieval datasets with hard negative mining
-- Native Matryoshka support (added in v1.5)
-- Separate query and passage encoders (asymmetric model — query encoder is different from document encoder)
-- 512 max seq len
-
-**Important:** arctic-embed models may use an asymmetric query/document encoder approach. Verify the correct API for querying vs indexing when running evals (may need to use `encode_queries()` vs `encode_corpus()`).
-
-### Use Case in This Research
-
-**Production-focused comparison.** Snowflake built this for production retrieval. If it performs well on our task with minimal fine-tuning, it suggests the model has implicitly learned structured data patterns. Also a good benchmark for "what does a model trained by a data platform company produce?"
-
-### Strengths for Entity Resolution
-
-- Native MRL (v1.5 addition)
-- Production-focused training — likely robust to noisy data
-- Same parameter scale as bge-base (109M) — good comparison point
-- Apache2 license
-- Well-maintained by a well-resourced company
-
-### Weaknesses for Entity Resolution
-
-- 512 max seq len (sufficient but not generous)
-- Asymmetric encoder architecture may require care in eval code
-- Less MTEB score transparency than nomic/bge
-- May not be asymmetric — verify before running eval
-
----
-
-## Implementation Notes
-
-### Loading Models in Code
-
+MRL addition during fine-tuning:
 ```python
-from sentence_transformers import SentenceTransformer
-
-# nomic requires trust_remote_code
-nomic = SentenceTransformer(
-    "nomic-ai/nomic-embed-text-v1.5",
-    trust_remote_code=True
-)
-
-# others do not
-bge = SentenceTransformer("BAAI/bge-base-en-v1.5")
-
-# arctic may need special tokenizer settings
-arctic = SentenceTransformer("Snowflake/snowflake-arctic-embed-m-v1.5")
-# Check if encode_queries / encode_documents asymmetry applies
+from sentence_transformers.losses import MatryoshkaLoss, MultipleNegativesRankingLoss
+inner_loss = MultipleNegativesRankingLoss(model)
+loss = MatryoshkaLoss(model, inner_loss, matryoshka_dims=[384, 256, 128, 64])
 ```
+One fine-tuning run gives you all dimension checkpoints.
 
-### MRL Truncation
+---
 
-For models with native MRL, truncate embeddings before indexing:
+### mxbai-embed-large-v1 — QUALITY CEILING
+**HuggingFace**: `mixedbread-ai/mxbai-embed-large-v1`  
+**Params**: 335M | **Dims**: 1024 | **License**: Apache 2.0  
+**MRL Native**: Yes | **MTEB Avg**: 64.7  
 
-```python
-import numpy as np
+Largest model in roster. Use zero-shot as the quality ceiling — if fine-tuned bge-small approaches mxbai-large zero-shot, you've proven the training data argument decisively. Don't fine-tune this on M3 Pro (335M + MNRL with large batch will OOM).
 
-def get_64d_embedding(full_embedding: np.ndarray) -> np.ndarray:
-    """Get 64-dim sub-embedding from MRL model output."""
-    sub = full_embedding[:64]
-    # L2 normalize the sub-embedding (important for cosine similarity to work correctly)
-    norm = np.linalg.norm(sub)
-    return sub / norm if norm > 0 else sub
-```
+---
 
-### Adding New Models
+### IBM Granite Embedding — 2025 NEWCOMERS
+**granite-embedding-125m-english**: `ibm-granite/granite-embedding-125m-english` — 125M, 768D, Apache 2.0  
+**granite-embedding-30m-english**: `ibm-granite/granite-embedding-30m-english` — 30M, 768D, MIT  
 
-To add a new model to the roster:
-1. Add entry to `configs/models.yaml` with all required fields.
-2. Ensure `sentence-transformers` can load it (test with `SentenceTransformer(hf_id)`).
-3. Add an experiment config in `experiments/00N_model_name/config.json`.
-4. Run eval with `src/eval/run_eval.py`.
+Released Q1 2025. IBM's enterprise embedding series. No MRL native. Include granite-30m as your absolute smallest data point in the size ablation — 30M params at 768D is architecturally interesting (bge-small is 33M at 384D, but granite-30m is 768D at similar param count via width-vs-depth tradeoffs).
+
+---
+
+## Excluded Models
+
+### Jina Embeddings v3
+**Why excluded**: CC BY-NC 4.0 license. Not commercial-friendly. Cannot include in a work research project.
+
+### Perplexity (any model)
+**Why excluded**: No open-source embedding model exists. See section above.
+
+### ColBERTv2
+**Why excluded from retrieval**: 128D per token × ~20 tokens/record × 500M records = ~500TB storage. Impractical. Keep as re-ranker discussion point only.
+
+### SPLADE v2
+**Why excluded from primary eval**: 30K-dim sparse vectors at 500M records. Not POC-able on M3 Pro. Document as "interesting future direction" in the paper.
+
+---
+
+## Fine-Tuning Priority
+
+Order to fine-tune given M3 Pro constraint (run weekends):
+
+1. **bge-small (33M)** — cheapest, fastest, proves training data argument
+2. **gte-modernbert-base (149M)** — best 2025 architecture, primary result
+3. **nomic-v1.5 (137M)** — MRL reference comparison
+4. Skip fine-tuning mxbai-large (OOM risk), nomic-v2-moe (MoE fine-tuning complex)
+
+Zero-shot eval only (no fine-tuning):
+- mxbai-embed-large-v1 (quality ceiling)
+- nomic-embed-text-v2-moe (MoE reference)
+- granite-embedding-30m (floor reference)
+- all-MiniLM-L6-v2 (absolute floor)
+
+---
+
+## Memory Footprint at 1M Records (Index Size)
+
+| Model | Dims | FP32 | INT8 | Binary |
+|-------|------|------|------|--------|
+| bge-small | 384 | 1.5GB | 384MB | 48MB |
+| gte-modernbert | 768 | 3.1GB | 768MB | 96MB |
+| nomic-v1.5 | 768 | 3.1GB | 768MB | 96MB |
+| mxbai-large | 1024 | 4.1GB | 1GB | 128MB |
+
+At 500M records (extrapolated):
+
+| Model | Dims | FP32 | INT8 | Binary |
+|-------|------|------|------|--------|
+| bge-small | 384 | 768GB ❌ | 192GB ⚠️ | 24GB ✅ |
+| gte-modernbert | 768 | 1.5TB ❌ | 384GB ❌ | 48GB ✅ |
+| gte-modernbert MRL 64D | 64 | 128GB ❌ | 32GB ✅ | 4GB ✅ |
+
+Two-stage with gte-modernbert: 64D binary HNSW (4GB) for ANN → 768D FP32 on 1000 candidates → production-viable.
