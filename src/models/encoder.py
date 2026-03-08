@@ -24,6 +24,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 import numpy as np
+import torch
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +103,26 @@ class SentenceTransformerEncoder(BaseEncoder):
         if device != "cpu":
             load_kwargs["device"] = device
 
+        # Fix #4: FP16 inference on MPS/CUDA — Apple Silicon AMX has dedicated
+        # FP16 matrix-multiply hardware; this roughly doubles encode throughput.
+        if device in ("mps", "cuda"):
+            load_kwargs["model_kwargs"] = {"torch_dtype": torch.float16}
+
         self._model = SentenceTransformer(load_path, **load_kwargs)
+
+        # Fix #5: torch.compile on inner transformer — fuses Metal kernels,
+        # reduces Python→GPU call overhead. ~15-30% encode speedup after warmup.
+        # Use dynamic=True because sentence lengths vary.
+        if device in ("mps", "cuda") and hasattr(torch, "compile"):
+            try:
+                self._model[0].auto_model = torch.compile(
+                    self._model[0].auto_model,
+                    mode="reduce-overhead",
+                    dynamic=True,
+                )
+                logger.info("torch.compile applied to %s (mode=reduce-overhead)", model_key)
+            except Exception as e:
+                logger.warning("torch.compile failed for %s, falling back to eager: %s", model_key, e)
 
         # Determine effective dimension
         dims_cfg = model_cfg.get("dims")
@@ -151,6 +171,7 @@ class SentenceTransformerEncoder(BaseEncoder):
             return texts
         return [prefix + t for t in texts]
 
+    @torch.inference_mode()
     def _encode(
         self,
         texts: list[str],

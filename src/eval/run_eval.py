@@ -14,6 +14,15 @@ Usage:
         --experiment-id 004 \\
         --device mps
 
+Optimizations (vs. original):
+    - Fix #1: No redundant third encode+search pass — evaluate_bucket_dense()
+      returns per-query metrics directly, reused for overall aggregation.
+    - Fix #2: LanceDB batch vector search — single call per bucket instead of
+      N individual Python→Rust round-trips.
+    - Fix #3: Parallel metric computation via joblib (pattern from run_bm25.py).
+    - Fix #6: Device-aware default batch size (128 for MPS, 32 for CPU).
+    - Fix #8: Default device is 'mps' (not 'cpu') since this runs on Apple Silicon.
+
 Output JSON matches the ADR-003 schema used by aggregate.py.
 """
 
@@ -30,6 +39,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 import yaml
+from joblib import Parallel, delayed
 from rich.console import Console
 from rich.progress import (
     BarColumn,
@@ -40,7 +50,6 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 from rich.table import Table
-
 
 from src.eval.metrics import aggregate_metrics, compute_metrics
 from src.models.encoder import load_encoder
@@ -55,21 +64,56 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def search_batch(table, query_vecs: np.ndarray, top_k: int) -> list[list[str]]:
+def _search_batch_chunk(table, query_vecs: np.ndarray, top_k: int) -> list[list[str]]:
     """
-    Run ANN search for a batch of query vectors.
+    Run ANN search for a chunk of query vectors using LanceDB native batch search.
 
     Returns a list of lists: for each query, an ordered list of retrieved entity_ids.
     """
+    n_queries = len(query_vecs)
+
+    result_df = (
+        table.search(query_vecs.tolist())
+        .limit(top_k)
+        .select(["entity_id", "_distance"])
+        .to_pandas()
+    )
+
+    # Group results by query_index and extract entity_ids in order
+    results_per_query: list[list[str]] = [[] for _ in range(n_queries)]
+    if "query_index" in result_df.columns and len(result_df) > 0:
+        for qi, group in result_df.groupby("query_index", sort=True):
+            results_per_query[int(qi)] = group["entity_id"].tolist()
+    elif n_queries == 1 and len(result_df) > 0:
+        # Single-vector search doesn't include query_index
+        results_per_query[0] = result_df["entity_id"].tolist()
+
+    return results_per_query
+
+
+def search_batch(
+    table, query_vecs: np.ndarray, top_k: int, chunk_size: int = 512
+) -> list[list[str]]:
+    """
+    Run ANN batch search, chunked to avoid LanceDB/Lance file-descriptor exhaustion.
+
+    Large batch searches (10K+ vectors) cause Lance to open too many internal
+    file handles simultaneously, hitting OS limits. Chunking into groups of
+    `chunk_size` vectors keeps file descriptors manageable while still being
+    much faster than single-query search (512 calls vs 10K calls).
+
+    Returns a list of lists: for each query, an ordered list of retrieved entity_ids.
+    """
+    n_queries = len(query_vecs)
+    if n_queries <= chunk_size:
+        return _search_batch_chunk(table, query_vecs, top_k)
+
     results_per_query: list[list[str]] = []
-    for vec in query_vecs:
-        result_df = (
-            table.search(vec.tolist())
-            .limit(top_k)
-            .select(["entity_id"])
-            .to_pandas()
-        )
-        results_per_query.append(result_df["entity_id"].tolist())
+    for i in range(0, n_queries, chunk_size):
+        chunk = query_vecs[i : i + chunk_size]
+        chunk_results = _search_batch_chunk(table, chunk, top_k)
+        results_per_query.extend(chunk_results)
+
     return results_per_query
 
 
@@ -78,7 +122,7 @@ def search_single(table, query_vec: np.ndarray, top_k: int) -> list[str]:
     result_df = (
         table.search(query_vec.tolist())
         .limit(top_k)
-        .select(["entity_id"])
+        .select(["entity_id", "_distance"])
         .to_pandas()
     )
     return result_df["entity_id"].tolist()
@@ -102,6 +146,8 @@ def measure_latency_dense(
     Measure single-query latency end-to-end (encode + search) in ms.
 
     Warmup phase discarded. Returns p50, p95, p99, n_queries.
+    Note: This intentionally uses single-query encode+search to measure
+    real per-query latency (not batch throughput).
     """
     all_queries = queries
     warmup_texts = all_queries[: min(n_warmup, len(all_queries))]
@@ -140,11 +186,19 @@ def evaluate_bucket_dense(
     bucket_df: pl.DataFrame,
     query_col: str,
     top_k: int,
-    encode_batch_size: int = 32,
-) -> dict[str, float]:
+    encode_batch_size: int = 128,
+    n_jobs: int = -1,
+) -> tuple[dict[str, float], list[dict[str, float]]]:
     """
     Encode all queries and retrieve top-k results, then compute metrics.
-    Uses batched encoding for throughput; single-query search for correct ranks.
+
+    Uses batched encoding for throughput, LanceDB batch search for retrieval,
+    and joblib parallel metric computation.
+
+    Returns
+    -------
+    tuple of (aggregated_metrics, per_query_metrics_list)
+        The per-query list is reused for overall aggregation (no redundant pass).
     """
     query_texts = bucket_df[query_col].to_list()
     ground_truth_ids = bucket_df["ground_truth_entity_id"].to_list()
@@ -168,23 +222,20 @@ def evaluate_bucket_dense(
 
     query_vecs = np.concatenate(all_vecs, axis=0)
 
-    # Search and collect metrics
-    per_query: list[dict] = []
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[cyan]{task.description}"),
-        BarColumn(),
-        MofNCompleteColumn(),
-        TimeElapsedColumn(),
-    ) as progress:
-        task = progress.add_task("Searching LanceDB", total=n)
-        for i, (vec, gt_id) in enumerate(zip(query_vecs, ground_truth_ids)):
-            retrieved_ids = search_single(table, vec, top_k)
-            metrics = compute_metrics(retrieved_ids, gt_id)
-            per_query.append(metrics)
-            progress.advance(task, 1)
+    # Batch search: single LanceDB call for all vectors
+    console.print(f"  [cyan]Batch searching {n:,} vectors...")
+    t0 = time.perf_counter()
+    retrieved_all = search_batch(table, query_vecs, top_k)
+    search_time = time.perf_counter() - t0
+    console.print(f"  [green]Batch search done in {search_time:.1f}s")
 
-    return aggregate_metrics(per_query)
+    # Parallel metric computation (pattern from run_bm25.py)
+    per_query: list[dict[str, float]] = Parallel(n_jobs=n_jobs, backend="loky")(
+        delayed(compute_metrics)(retrieved_all[i], ground_truth_ids[i])
+        for i in range(n)
+    )
+
+    return aggregate_metrics(per_query), per_query
 
 
 # ---------------------------------------------------------------------------
@@ -209,16 +260,34 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--experiment-id", default="001", help="Experiment ID for the results JSON"
     )
+    # Fix #8: Default to 'mps' since this project targets Apple Silicon
     parser.add_argument(
-        "--device", default="cpu", choices=["cpu", "cuda", "mps"], help="Compute device"
+        "--device", default="mps", choices=["cpu", "cuda", "mps"], help="Compute device"
     )
     parser.add_argument("--model-path", default=None, help="Path to fine-tuned model checkpoint")
-    parser.add_argument("--batch-size", type=int, default=32, help="Query encoding batch size")
+    # Fix #6: Device-aware batch size — None means auto (128 for MPS/CUDA, 32 for CPU)
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=None,
+        help="Query encoding batch size (default: 128 for MPS/CUDA, 32 for CPU)",
+    )
+    parser.add_argument(
+        "--n-jobs",
+        type=int,
+        default=-1,
+        help="Parallel jobs for metric computation. -1 = all cores.",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+
+    # Fix #6: Resolve batch size based on device
+    if args.batch_size is None:
+        args.batch_size = 128 if args.device in ("mps", "cuda") else 32
+    console.print(f"[cyan]Batch size: {args.batch_size} (device={args.device})")
 
     # ---- Load configs ----
     with open(args.models_config) as f:
@@ -291,6 +360,8 @@ def main() -> None:
     all_per_query: list[dict] = []
     all_latency_info: list[dict] = []
 
+    total_t0 = time.perf_counter()
+
     for bucket in buckets:
         bucket_df = df.filter(pl.col("bucket") == bucket)
         n_bucket = len(bucket_df)
@@ -300,7 +371,7 @@ def main() -> None:
 
         console.print(f"\n[bold cyan]Bucket: '{bucket}' ({n_bucket:,} queries)")
 
-        # Latency measurement (single-query end-to-end)
+        # Latency measurement (single-query end-to-end — intentionally not batched)
         query_texts = bucket_df[query_col].to_list()
         latency_info = measure_latency_dense(
             encoder=encoder,
@@ -312,23 +383,20 @@ def main() -> None:
             encode_batch_size=args.batch_size,
         )
 
-        # Full metrics on all queries
-        bucket_metrics = evaluate_bucket_dense(
+        # Fix #1 + #2 + #3: Full metrics on all queries — returns per-query list
+        # so we can extend all_per_query without a redundant third pass.
+        bucket_metrics, per_query = evaluate_bucket_dense(
             encoder=encoder,
             table=table,
             bucket_df=bucket_df,
             query_col=query_col,
             top_k=top_k,
             encode_batch_size=args.batch_size,
+            n_jobs=args.n_jobs,
         )
 
-        # Collect per-query for overall metrics
-        gt_ids = bucket_df["ground_truth_entity_id"].to_list()
-        q_texts = bucket_df[query_col].to_list()
-        for qt_text, gt_id in zip(q_texts, gt_ids):
-            vec = encoder.encode_queries([qt_text], batch_size=1)
-            retrieved = search_single(table, vec[0], top_k)
-            all_per_query.append(compute_metrics(retrieved, gt_id))
+        # Reuse per-query results for overall aggregation (no third pass!)
+        all_per_query.extend(per_query)
 
         all_latency_info.append(latency_info)
 
@@ -344,6 +412,8 @@ def main() -> None:
             f"MRR={bucket_metrics.get('mrr_at_10', 0):.3f}  "
             f"p50={latency_info['p50']:.2f}ms"
         )
+
+    total_elapsed = time.perf_counter() - total_t0
 
     # ---- Overall metrics ----
     overall_metrics = aggregate_metrics(all_per_query)
@@ -391,6 +461,7 @@ def main() -> None:
         f"[bold]{overall_latency['p50']:.2f}[/bold]",
     )
     console.print(table_out)
+    console.print(f"[bold cyan]Total eval time: {total_elapsed:.1f}s")
 
     # ---- Build output JSON (ADR-003 schema) ----
     per_bucket_clean: dict[str, dict] = {}
