@@ -32,7 +32,7 @@ minilm_l6:
 pplx_embed_v1_06b:
   hf_id: perplexity-ai/pplx-embed-v1-0.6b
   params_m: 600
-  dims: [1536, 768, 256, 128, 64]
+  dims: [1024, 768, 256, 128, 64]
   license: apache2
   mrl_native: true
   role: sota_ceiling
