@@ -34,6 +34,8 @@ pplx_embed_v1_06b:
   params_m: 600
   dims: [1024, 768, 256, 128, 64]
   license: apache2
+  trust_remote_code: true
+  fp16: false  # Qwen2.5 decoder-only produces NaN in FP16 on MPS; use FP32
   mrl_native: true
   role: sota_ceiling
   eval_mode: both
@@ -68,6 +70,7 @@ gte_modernbert_base:
   params_m: 149
   dims: [768, 512, 256, 128, 64]
   license: apache2
+  trust_remote_code: true
   mrl_native: true
   role: primary_result
   eval_mode: both  # zero-shot + fine-tuned
@@ -83,6 +86,7 @@ nomic_v15:
   params_m: 137
   dims: [768, 512, 256, 128, 64]
   license: apache2
+  trust_remote_code: true
   mrl_native: true
   role: mrl_reference
   eval_mode: both  # zero-shot + fine-tuned

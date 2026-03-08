@@ -257,8 +257,8 @@ uv run python src/eval/run_eval.py \
 
 ## EXP-007: nomic-embed-text-v1.5 Fine-Tuned (pipe)
 
-**Date:** pending
-**Status:** pending
+**Date:** March 2026
+**Status:** done
 
 **Config:**
 - Model: nomic-embed-text-v1.5 fine-tuned
@@ -290,7 +290,17 @@ uv run python src/eval/run_eval.py \
     --output results/007_nomic_v15_pipe_ft_fp32.json
 ```
 
-**Results:** pending
+**Results (FT vs Base):**
+*   **Overall MRR@10:** Dropped from 0.850 (Base) to 0.794 (FT).
+*   **Pristine Recall@1:** Dropped from 0.996 (Base) to 0.977 (FT).
+*   **Missing Email/Company Recall@1:** Catastrophic drop from 0.232 (Base) to 0.070 (FT).
+
+**Observations:** 
+**Catastrophic Forgetting during MNRL Fine-Tuning.** 
+While simpler architectures like `minilm_l6` saw massive improvements across all buckets post-fine-tuning, `nomic_v15` severely degraded. The model lost its ability to handle partial or highly-corrupted data (Missing Email/Company recall dropped from 23% to 7%).
+This is likely because Nomic v1.5 utilizes a highly specialized architecture (Rotary Position Embeddings, 8192 context length, causal masking strategy) and relies on explicit text prefixes (`search_query: `). When fine-tuned using standard Multiple Negatives Ranking Loss (MNRL) on short, noisy synthetic strings alongside MatryoshkaLoss, it caused catastrophic forgetting of its original semantic space. The prefix taking up the first dimensions of the representation likely compounded the instability when forced through MRL.
+
+**Conclusion:** Nomic-v15 is too brittle for this specific MNRL fine-tuning recipe on partial records. We will rely on simpler, robust architectures (like MiniLM and BGE) or natively supportive models (like GTE-ModernBERT).
 
 ---
 

@@ -168,19 +168,19 @@ def build_lance_ann_index(table, dim: int, quantization: str) -> None:
     try:
         # IVF_HNSW is the 2026 standard for high-performance vector search
         table.create_index(
-            column="vector",
+            vector_column_name="vector",
             index_type="IVF_HNSW",
             metric=metric,
             num_partitions=num_partitions,
         )
         console.print("[green]IVF_HNSW index created.")
     except Exception as exc:
-        console.print(f"[yellow]ANN index creation failed ({exc}); falling back to IVF_PQ or brute force.")
+        console.print(f"[yellow]ANN index creation failed ({exc}); falling back to default IVF_PQ.")
         try:
-            table.create_index(column="vector", metric=metric)
+            table.create_index(vector_column_name="vector", metric=metric)
             console.print("[green]Default index created.")
-        except Exception:
-            console.print("[yellow]Brute force search will be used.")
+        except Exception as e:
+            console.print(f"[yellow]Brute force search will be used. Error: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -303,7 +303,7 @@ def build_dense_index(
     console.print(f"[green]All {n:,} rows written.")
 
     # Build ANN index
-    build_lance_ann_index(table, dim)
+    build_lance_ann_index(table, dim, quantization)
 
 
 # ---------------------------------------------------------------------------

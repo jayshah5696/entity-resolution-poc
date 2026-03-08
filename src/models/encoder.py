@@ -86,10 +86,8 @@ class SentenceTransformerEncoder(BaseEncoder):
         hf_id: str = model_cfg["hf_id"]
         load_path = model_path if model_path else hf_id
 
-        # Trust remote code for models that require it
-        trust_remote_code: bool = model_cfg.get("trust_remote_code", False) or (
-            model_key in ("gte_modernbert_base", "nomic_v15")
-        )
+        # Trust remote code for models that require it (config-driven via models.yaml)
+        trust_remote_code: bool = model_cfg.get("trust_remote_code", False)
 
         logger.info("Loading %s from %s (device=%s)", model_key, load_path, device)
 
@@ -99,7 +97,10 @@ class SentenceTransformerEncoder(BaseEncoder):
 
         # Fix #4: FP16 inference on MPS/CUDA — Apple Silicon AMX has dedicated
         # FP16 matrix-multiply hardware; this roughly doubles encode throughput.
-        if device in ("mps", "cuda"):
+        # Skip for models that produce NaN in FP16 (e.g. large decoder-only models
+        # like pplx Qwen2.5-based). Controlled via fp16: false in models.yaml.
+        use_fp16 = model_cfg.get("fp16", True)  # default: enabled
+        if device in ("mps", "cuda") and use_fp16:
             load_kwargs["model_kwargs"] = {"torch_dtype": torch.float16}
 
         self._model = SentenceTransformer(load_path, **load_kwargs)
