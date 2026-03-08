@@ -23,7 +23,7 @@ minilm_l6:
   license: apache2
   mrl_native: false
   role: floor_baseline
-  eval_mode: zero_shot
+  eval_mode: both
   query_prefix: null
   doc_prefix: null
   pooling: mean
@@ -36,7 +36,7 @@ pplx_embed_v1_06b:
   license: apache2
   mrl_native: true
   role: sota_ceiling
-  eval_mode: zero_shot
+  eval_mode: both
   architecture: decoder_only_qwen25
   query_prefix: "query_system_prompt"  # uses separate system prompt for queries
   doc_prefix: "doc_system_prompt"      # uses separate system prompt for docs
@@ -98,10 +98,10 @@ finetune_targets:
   - bge_small
   - gte_modernbert_base
   - nomic_v15
-
-zero_shot_only:
-  - minilm_l6
   - pplx_embed_v1_06b
+  - minilm_l6
+
+zero_shot_only: []
 
 serialization_formats:
   - pipe    # "Jay Shah | Acme Corp | jay@acme.com | USA"

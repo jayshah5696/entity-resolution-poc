@@ -59,14 +59,24 @@ uv run python src/data/eval_set.py \
 ```
 
 ### 3. Evaluation
+
+**Quantization Options**
+When building a dense index, use the `--quantization` flag to control memory usage:
+- `--quantization fp32` (Default): 4 bytes per dimension (e.g. 768 dims = 3KB/vector)
+- `--quantization int8`: 1 byte per dimension (e.g. 768 dims = 768 bytes/vector)
+- `--quantization binary`: 1 bit per dimension (e.g. 768 dims = 96 bytes/vector)
+
 ```bash
 # Build BM25 index and run evaluation
 uv run python src/eval/build_index.py --model bm25_baseline --serialization pipe --index-profiles data/processed/index.parquet --eval-profiles data/eval/eval_profiles.parquet --output-dir results/indexes/bm25_pipe --models-config configs/models.yaml
 uv run python src/eval/run_bm25.py --index-dir results/indexes/bm25_pipe --eval-queries data/eval/eval_queries.parquet --output results/001_bm25_pipe.json --serialization pipe --experiment-id 001
 
-# Build Dense embedding index and run evaluation
+# Build Dense embedding index and run evaluation (FP32)
 uv run python src/eval/build_index.py --model gte_modernbert_base --serialization pipe --quantization fp32 --index-profiles data/processed/index.parquet --eval-profiles data/eval/eval_profiles.parquet --output-dir results/indexes/gte_modernbert_base_pipe_fp32 --device mps
 uv run python src/eval/run_eval.py --model gte_modernbert_base --index-dir results/indexes/gte_modernbert_base_pipe_fp32 --eval-queries data/eval/eval_queries.parquet --output results/004_gte_modernbert_pipe_fp32.json --serialization pipe --experiment-id 004
+
+# Evaluate Fine-Tuned pplx-embed model (background)
+nohup bash -c 'uv run python src/eval/build_index.py --model pplx_embed_v1_06b --model-path jayshah5696/er-pplx-embed-v1-06b-pipe-ft --serialization pipe --quantization fp32 --index-profiles data/processed/index.parquet --eval-profiles data/eval/eval_profiles.parquet --output-dir results/indexes/pplx_embed_v1_06b_ft_pipe --device mps && uv run python src/eval/run_eval.py --model pplx_embed_v1_06b --model-path jayshah5696/er-pplx-embed-v1-06b-pipe-ft --index-dir results/indexes/pplx_embed_v1_06b_ft_pipe --eval-queries data/eval/eval_queries.parquet --output results/pplx_embed_v1_06b_ft_pipe.json --serialization pipe --experiment-id pplx_embed_v1_06b_ft' > eval_pplx_embed_ft.log 2>&1 &
 
 # Aggregate results
 uv run python src/eval/aggregate.py --results-dir results/ --output-csv results/master_results.csv --output-report results/report.md
