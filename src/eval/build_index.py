@@ -48,7 +48,7 @@ from rich.progress import (
 
 
 from src.data.serialize import serialize
-from src.models.encoder import BM25Encoder, load_encoder
+from src.models.encoder import load_encoder
 
 console = Console()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -70,12 +70,12 @@ def apply_quantization(vecs: np.ndarray, mode: str) -> np.ndarray:
         Input embeddings (assumed L2-normalized).
     mode : str
         "fp32"   -- no-op, return as-is.
-        "int8"   -- scale each vector to [-128, 127], store as float32.
-        "binary" -- sign quantization: values become +1.0 or -1.0.
+        "int8"   -- scale each vector to [-128, 127], store as int8.
+        "binary" -- sign quantization: values become packed bits (uint8).
 
     Returns
     -------
-    np.ndarray, dtype float32
+    np.ndarray
     """
     if mode == "fp32":
         return vecs.astype(np.float32)
@@ -84,11 +84,20 @@ def apply_quantization(vecs: np.ndarray, mode: str) -> np.ndarray:
         # Scale per-vector to fill [-128, 127]
         abs_max = np.abs(vecs).max(axis=1, keepdims=True)
         abs_max = np.where(abs_max == 0, 1.0, abs_max)
-        scaled = np.round(vecs / abs_max * 127).clip(-128, 127).astype(np.float32)
+        scaled = np.round(vecs / abs_max * 127).clip(-128, 127).astype(np.int8)
         return scaled
 
     if mode == "binary":
-        return np.sign(vecs).astype(np.float32)
+        # Pack bits into uint8 (1 bit per dimension)
+        # Dimensions must be multiple of 8 for simple packing
+        if vecs.shape[1] % 8 != 0:
+            logger.warning(
+                "Vector dim %d is not a multiple of 8. Binary packing might be inefficient.",
+                vecs.shape[1],
+            )
+        # np.packbits expects bool or uint8
+        packed = np.packbits(vecs > 0, axis=1)
+        return packed
 
     raise ValueError(f"Unknown quantization mode: {mode!r}. Use 'fp32', 'int8', or 'binary'.")
 
@@ -98,15 +107,25 @@ def apply_quantization(vecs: np.ndarray, mode: str) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 
-def create_lance_table(db, table_name: str, dim: int):
+def create_lance_table(db, table_name: str, dim: int, quantization: str):
     """Create a LanceDB table with entity_id, text, vector columns."""
     import pyarrow as pa
+
+    if quantization == "fp32":
+        vec_type = pa.list_(pa.float32(), dim)
+    elif quantization == "int8":
+        vec_type = pa.list_(pa.int8(), dim)
+    elif quantization == "binary":
+        # Packed bits: dim/8 bytes
+        vec_type = pa.list_(pa.uint8(), (dim + 7) // 8)
+    else:
+        raise ValueError(f"Unknown quantization: {quantization}")
 
     schema = pa.schema(
         [
             pa.field("entity_id", pa.string()),
             pa.field("text", pa.string()),
-            pa.field("vector", pa.list_(pa.float32(), dim)),
+            pa.field("vector", vec_type),
         ]
     )
     # Drop existing table if present
@@ -118,33 +137,42 @@ def create_lance_table(db, table_name: str, dim: int):
     return table
 
 
-def build_lance_ann_index(table, dim: int) -> None:
+def build_lance_ann_index(table, dim: int, quantization: str) -> None:
     """
     Create an approximate nearest-neighbor index on the LanceDB table.
-    Tries IVF_PQ first; falls back gracefully if unavailable.
+    Uses IVF_HNSW for best 2026 performance.
     """
     n_rows = table.count_rows()
     if n_rows < 256:
         console.print("[yellow]Too few rows for ANN index, skipping.")
         return
 
+    # Metric depends on quantization
+    metric = "cosine" if quantization != "binary" else "hamming"
+
     # Choose partition count based on corpus size
     num_partitions = min(256, max(8, n_rows // 4000))
-    num_sub_vectors = min(64, max(1, dim // 16))
 
     console.print(
-        f"[bold cyan]Building ANN index (IVF_PQ) "
-        f"partitions={num_partitions} sub_vectors={num_sub_vectors}..."
+        f"[bold cyan]Building ANN index (IVF_HNSW) "
+        f"metric={metric} partitions={num_partitions}..."
     )
     try:
+        # IVF_HNSW is the 2026 standard for high-performance vector search
         table.create_index(
-            metric="cosine",
+            column="vector",
+            index_type="IVF_HNSW",
+            metric=metric,
             num_partitions=num_partitions,
-            num_sub_vectors=num_sub_vectors,
         )
-        console.print("[green]ANN index created.")
+        console.print("[green]IVF_HNSW index created.")
     except Exception as exc:
-        console.print(f"[yellow]ANN index creation failed ({exc}); index will use brute force.")
+        console.print(f"[yellow]ANN index creation failed ({exc}); falling back to IVF_PQ or brute force.")
+        try:
+            table.create_index(column="vector", metric=metric)
+            console.print("[green]Default index created.")
+        except Exception:
+            console.print("[yellow]Brute force search will be used.")
 
 
 # ---------------------------------------------------------------------------
@@ -233,7 +261,7 @@ def build_dense_index(
 
     # Open / create LanceDB
     db = lancedb.connect(str(output_dir))
-    table = create_lance_table(db, "index", dim)
+    table = create_lance_table(db, "index", dim, quantization)
 
     # Write in batches
     n = len(entity_ids)

@@ -22,8 +22,7 @@ Optimizations (vs. original):
     - Fix #3: Parallel metric computation via joblib (pattern from run_bm25.py).
     - Fix #6: Device-aware default batch size (128 for MPS, 32 for CPU).
     - Fix #8: Default device is 'mps' (not 'cpu') since this runs on Apple Silicon.
-
-Output JSON matches the ADR-003 schema used by aggregate.py.
+    - 2026 Optimization: Native quantization support for queries and direct numpy search.
 """
 
 from __future__ import annotations
@@ -52,6 +51,7 @@ from rich.progress import (
 from rich.table import Table
 
 from src.eval.metrics import aggregate_metrics, compute_metrics
+from src.eval.build_index import apply_quantization
 from src.models.encoder import load_encoder
 
 console = Console()
@@ -72,8 +72,9 @@ def _search_batch_chunk(table, query_vecs: np.ndarray, top_k: int) -> list[list[
     """
     n_queries = len(query_vecs)
 
+    # 2026 Optimization: Pass numpy array directly, no .tolist()
     result_df = (
-        table.search(query_vecs.tolist())
+        table.search(query_vecs)
         .limit(top_k)
         .select(["entity_id", "_distance"])
         .to_pandas()
@@ -96,13 +97,6 @@ def search_batch(
 ) -> list[list[str]]:
     """
     Run ANN batch search, chunked to avoid LanceDB/Lance file-descriptor exhaustion.
-
-    Large batch searches (10K+ vectors) cause Lance to open too many internal
-    file handles simultaneously, hitting OS limits. Chunking into groups of
-    `chunk_size` vectors keeps file descriptors manageable while still being
-    much faster than single-query search (512 calls vs 10K calls).
-
-    Returns a list of lists: for each query, an ordered list of retrieved entity_ids.
     """
     n_queries = len(query_vecs)
     if n_queries <= chunk_size:
@@ -119,8 +113,9 @@ def search_batch(
 
 def search_single(table, query_vec: np.ndarray, top_k: int) -> list[str]:
     """Run ANN search for a single query vector. Returns ordered entity_ids."""
+    # 2026 Optimization: Pass numpy array directly
     result_df = (
-        table.search(query_vec.tolist())
+        table.search(query_vec)
         .limit(top_k)
         .select(["entity_id", "_distance"])
         .to_pandas()
@@ -138,16 +133,13 @@ def measure_latency_dense(
     table,
     queries: list[str],
     top_k: int,
+    quantization: str = "fp32",
     n_warmup: int = 100,
     n_measure: int = 1000,
     encode_batch_size: int = 32,
 ) -> dict[str, float]:
     """
     Measure single-query latency end-to-end (encode + search) in ms.
-
-    Warmup phase discarded. Returns p50, p95, p99, n_queries.
-    Note: This intentionally uses single-query encode+search to measure
-    real per-query latency (not batch throughput).
     """
     all_queries = queries
     warmup_texts = all_queries[: min(n_warmup, len(all_queries))]
@@ -156,14 +148,16 @@ def measure_latency_dense(
     # Warmup
     for qt in warmup_texts:
         vec = encoder.encode_queries([qt], batch_size=1)
-        search_single(table, vec[0], top_k)
+        vec_q = apply_quantization(vec, quantization)
+        search_single(table, vec_q[0], top_k)
 
     # Timed
     latencies_ms: list[float] = []
     for qt in measure_texts:
         t0 = time.perf_counter()
         vec = encoder.encode_queries([qt], batch_size=1)
-        search_single(table, vec[0], top_k)
+        vec_q = apply_quantization(vec, quantization)
+        search_single(table, vec_q[0], top_k)
         latencies_ms.append((time.perf_counter() - t0) * 1000.0)
 
     arr = np.array(latencies_ms)
@@ -186,19 +180,12 @@ def evaluate_bucket_dense(
     bucket_df: pl.DataFrame,
     query_col: str,
     top_k: int,
+    quantization: str = "fp32",
     encode_batch_size: int = 128,
     n_jobs: int = -1,
 ) -> tuple[dict[str, float], list[dict[str, float]]]:
     """
     Encode all queries and retrieve top-k results, then compute metrics.
-
-    Uses batched encoding for throughput, LanceDB batch search for retrieval,
-    and joblib parallel metric computation.
-
-    Returns
-    -------
-    tuple of (aggregated_metrics, per_query_metrics_list)
-        The per-query list is reused for overall aggregation (no redundant pass).
     """
     query_texts = bucket_df[query_col].to_list()
     ground_truth_ids = bucket_df["ground_truth_entity_id"].to_list()
@@ -221,6 +208,9 @@ def evaluate_bucket_dense(
             progress.advance(task, len(batch))
 
     query_vecs = np.concatenate(all_vecs, axis=0)
+    
+    # Apply same quantization as index
+    query_vecs = apply_quantization(query_vecs, quantization)
 
     # Batch search: single LanceDB call for all vectors
     console.print(f"  [cyan]Batch searching {n:,} vectors...")
@@ -378,6 +368,7 @@ def main() -> None:
             table=table,
             queries=query_texts,
             top_k=top_k,
+            quantization=quantization,
             n_warmup=min(100, n_bucket),
             n_measure=min(1000, n_bucket),
             encode_batch_size=args.batch_size,
@@ -391,6 +382,7 @@ def main() -> None:
             bucket_df=bucket_df,
             query_col=query_col,
             top_k=top_k,
+            quantization=quantization,
             encode_batch_size=args.batch_size,
             n_jobs=args.n_jobs,
         )

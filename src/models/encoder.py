@@ -5,16 +5,10 @@ Reads model config from configs/models.yaml and applies per-model quirks
 (prefixes, prompt names, pooling) automatically. Eval scripts call
 encode_queries() and encode_docs() and contain zero model-specific logic.
 
-Usage:
-    enc = load_encoder("gte_modernbert_base", model_cfg, device="mps")
-    doc_vecs = enc.encode_docs(texts, batch_size=128)
-    qry_vecs = enc.encode_queries(queries, batch_size=128)
-
 Model-specific quirks handled here:
   - nomic_v15: prepends "search_query: " / "search_document: " to all texts
   - pplx_embed_v1_06b: uses prompt_name="query" / "document" via sentence-transformers
   - minilm_l6, bge_small, gte_modernbert_base: plain encode, normalize=True
-  - bm25_baseline: BM25Okapi wrapper with whitespace tokenization
 """
 
 from __future__ import annotations
@@ -263,121 +257,25 @@ class SentenceTransformerEncoder(BaseEncoder):
 
 
 # ---------------------------------------------------------------------------
-# BM25 encoder
+# BM25 (FTS) Placeholder
 # ---------------------------------------------------------------------------
 
 
-class BM25Encoder(BaseEncoder):
+class BM25FTSPlaceholder(BaseEncoder):
     """
-    BM25 wrapper using rank_bm25.BM25Okapi.
-
-    Tokenization: lowercase + whitespace split. Simple but preserves
-    email structure (dots, @ symbol) which matters for this task.
-
-    Interface differs from dense encoders:
-      - encode_docs() tokenizes all documents and builds the BM25 index.
-        Returns an empty array (not used for vector storage).
-      - encode_queries() returns tokenized query strings (not vectors).
-        Returns a list of token lists, NOT a numpy array.
-      - search(query_tokens, n) returns (entity_id, score) pairs.
+    Placeholder for BM25 when using LanceDB native FTS.
+    BM25 doesn't need an encoder class since tokenization and indexing 
+    are handled by LanceDB/Tantivy.
     """
 
-    def __init__(self, model_key: str, model_cfg: dict) -> None:
-        from rank_bm25 import BM25Okapi
-
+    def __init__(self, model_key: str) -> None:
         self._model_key = model_key
-        self._model_cfg = model_cfg
-        self._bm25: BM25Okapi | None = None
-        self._entity_ids: list[str] = []
-        self._k1: float = float(model_cfg.get("params", {}).get("k1", 1.5))
-        self._b: float = float(model_cfg.get("params", {}).get("b", 0.75))
-
-    @staticmethod
-    def tokenize(text: str) -> list[str]:
-        """Lowercase + whitespace split tokenization."""
-        return text.lower().split()
 
     def encode_docs(self, texts: list[str], batch_size: int = 128) -> np.ndarray:
-        """
-        Build the BM25 index from document texts.
-        entity_ids must be set via set_entity_ids() before calling search().
-        Returns empty array (BM25 is not vector-based).
-        """
-        from rank_bm25 import BM25Okapi
-
-        from rich.console import Console
-
-        console = Console()
-        console.print(f"[bold cyan]Tokenizing {len(texts):,} documents for BM25...")
-
-        tokenized = [self.tokenize(t) for t in texts]
-        console.print("[bold cyan]Building BM25 index...")
-        self._bm25 = BM25Okapi(tokenized, k1=self._k1, b=self._b)
-        console.print(f"[green]BM25 index built ({len(texts):,} docs)")
         return np.empty((0,), dtype=np.float32)
 
     def encode_queries(self, texts: list[str], batch_size: int = 128) -> np.ndarray:
-        """
-        Tokenize query texts. Returns a 2D object array of token lists
-        (not actual float vectors). Callers of BM25 should use tokenize_queries()
-        or call search() directly.
-        """
-        result = np.empty(len(texts), dtype=object)
-        for i, t in enumerate(texts):
-            result[i] = self.tokenize(t)
-        return result
-
-    def tokenize_queries(self, texts: list[str]) -> list[list[str]]:
-        """Return tokenized queries as a plain list of token lists."""
-        return [self.tokenize(t) for t in texts]
-
-    def set_entity_ids(self, entity_ids: list[str]) -> None:
-        """Set entity IDs so search() can map scores to IDs."""
-        self._entity_ids = entity_ids
-
-    def search(self, query_tokens: list[str], n: int = 10) -> list[tuple[str, float]]:
-        """
-        Retrieve top-n documents for a tokenized query.
-
-        Parameters
-        ----------
-        query_tokens : list[str]
-            Tokenized query (from tokenize()).
-        n : int
-            Number of results to return.
-
-        Returns
-        -------
-        list of (entity_id, score) sorted descending by score.
-        """
-        if self._bm25 is None:
-            raise RuntimeError("BM25 index not built. Call encode_docs() first.")
-        scores = self._bm25.get_scores(query_tokens)
-        # Get top-n indices
-        top_n = min(n, len(scores))
-        top_indices = np.argpartition(scores, -top_n)[-top_n:]
-        top_indices = top_indices[np.argsort(scores[top_indices])[::-1]]
-        return [(self._entity_ids[i], float(scores[i])) for i in top_indices]
-
-    def load(self, bm25_path: str, entity_ids_path: str) -> None:
-        """Load a pre-built BM25 index from disk."""
-        import json
-        import pickle
-
-        with open(bm25_path, "rb") as f:
-            self._bm25 = pickle.load(f)
-        with open(entity_ids_path) as f:
-            self._entity_ids = json.load(f)
-
-    def save(self, bm25_path: str, entity_ids_path: str) -> None:
-        """Persist the BM25 index to disk."""
-        import json
-        import pickle
-
-        with open(bm25_path, "wb") as f:
-            pickle.dump(self._bm25, f, protocol=pickle.HIGHEST_PROTOCOL)
-        with open(entity_ids_path, "w") as f:
-            json.dump(self._entity_ids, f)
+        return np.empty((0,), dtype=np.float32)
 
     @property
     def dim(self) -> int:
@@ -408,25 +306,21 @@ def load_encoder(
     model_key : str
         One of the 5 locked model keys from models.yaml.
     model_cfg : dict
-        The dict for this specific model from models.yaml
-        (e.g. cfg["gte_modernbert_base"]).
+        The dict for this specific model from models.yaml.
     device : str
         "cpu", "cuda", or "mps". Ignored for BM25.
     model_path : str | None
-        If given, load a fine-tuned model from this local path
-        instead of the HuggingFace hub.
+        If given, load a fine-tuned model from this local path.
     truncate_dim : int | None
         For MRL models, truncate embeddings to this dimension.
 
     Returns
     -------
     BaseEncoder
-        A BM25Encoder if model_cfg["type"] == "bm25",
-        otherwise a SentenceTransformerEncoder.
     """
     model_type = model_cfg.get("type", "dense")
     if model_type == "bm25":
-        return BM25Encoder(model_key=model_key, model_cfg=model_cfg)
+        return BM25FTSPlaceholder(model_key=model_key)
 
     return SentenceTransformerEncoder(
         model_key=model_key,
