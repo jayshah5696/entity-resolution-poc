@@ -113,7 +113,13 @@ class SentenceTransformerEncoder(BaseEncoder):
         # Fix #5: torch.compile on inner transformer — fuses Metal kernels,
         # reduces Python→GPU call overhead. ~15-30% encode speedup after warmup.
         # Use dynamic=True because sentence lengths vary.
-        if device in ("mps", "cuda") and hasattr(torch, "compile"):
+        # Skip for trust_remote_code models (e.g. gte_modernbert, nomic) — their
+        # custom architectures emit float64 ops that MPS Inductor doesn't support.
+        if (
+            device in ("mps", "cuda")
+            and hasattr(torch, "compile")
+            and not trust_remote_code
+        ):
             try:
                 self._model[0].auto_model = torch.compile(
                     self._model[0].auto_model,
