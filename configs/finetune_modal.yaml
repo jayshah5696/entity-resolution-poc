@@ -6,8 +6,8 @@
 modal:
   app_name: entity-resolution-finetune
   volume_name: entity-resolution-checkpoints
-  gpu: A10G
-  timeout_min: 90
+  gpu: A100           # A100-40GB: needed for PPLX at batch=128. Change back to A10G for other models.
+  timeout_min: 240    # PPLX on A100 ~3h; leave headroom for slow starts / checkpointing
 
 # ── HuggingFace / W&B ────────────────────────────────────────────────────────
 hf_dataset_repo: jayshah5696/entity-resolution-triplets
@@ -52,10 +52,12 @@ models:
     dims: [768, 512, 256, 128, 64]
     trust_remote_code: true
     mrl_native: true
-    # A10G OOM at batch=256 with flash-attn + 5 matryoshka dims
-    batch_size: 64
-    grad_accum: 4           # eff batch=256, same as default
-    grad_checkpointing: true
+    # A100-40GB: 149M model fits batch=256 easily (~15 GB total).
+    # On A10G this needed batch=64/accum=4 due to OOM with flash-attn + 5 matryoshka dims.
+    # On A100: single fwd pass per step, maximum throughput.
+    batch_size: 256
+    grad_accum: 1             # eff batch=256, single fwd pass
+    grad_checkpointing: true  # still helps, 5 matryoshka dims = extra memory
 
   nomic_v15:
     hf_id: nomic-ai/nomic-embed-text-v1.5
@@ -71,6 +73,11 @@ models:
     dims: [1024, 768, 256, 128, 64]  # actual model dim is 1024
     trust_remote_code: true
     mrl_native: true
-    batch_size: 8
-    grad_accum: 32          # eff batch=256
+    # A100-40GB: 0.6B model at batch=8 used 13.1 GB on A10G (W&B measured).
+    # MNRL processes anchor/pos/neg in separate fwd passes so peak = batch, not batch×3.
+    # Actual activations scale ~11 MB/sample; rest is fixed overhead (~13 GB).
+    # batch=256 → ~20 GB total, well within 40 GB.
+    # If OOM: drop to batch=128, accum=2.
+    batch_size: 256
+    grad_accum: 1             # single fwd+bwd pass per optimizer step, maximum GPU utilization
     grad_checkpointing: true
