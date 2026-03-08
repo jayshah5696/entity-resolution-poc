@@ -19,7 +19,7 @@ bm25_baseline:
 minilm_l6:
   hf_id: sentence-transformers/all-MiniLM-L6-v2
   params_m: 22
-  dims: [384]
+  dims: [384, 256, 128, 64]
   license: apache2
   mrl_native: false
   role: floor_baseline
