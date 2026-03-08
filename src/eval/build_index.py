@@ -1,7 +1,8 @@
 """
-build_index.py -- Encode all index profiles and store in LanceDB (or BM25 pickle).
+build_index.py -- Encode all index profiles and store in LanceDB (or BM25 pickle),
+                 or derive a new index from an existing one.
 
-Usage:
+Usage (Full Encode):
     uv run python src/eval/build_index.py \\
         --model gte_modernbert_base \\
         --serialization pipe \\
@@ -11,6 +12,13 @@ Usage:
         --models-config configs/models.yaml \\
         --batch-size 128 \\
         --device mps
+
+Usage (Derive new index via MRL slicing / Quantization):
+    uv run python src/eval/build_index.py \\
+        --source-index results/indexes/gte_modernbert_base_pipe_fp32 \\
+        --output-dir results/indexes/gte_64_int8 \\
+        --truncate-dim 64 \\
+        --quantization int8
 
 For BM25:
     uv run python src/eval/build_index.py \\
@@ -317,6 +325,78 @@ def get_dir_size_mb(path: Path) -> float:
 
 
 # ---------------------------------------------------------------------------
+# Index Derivation
+# ---------------------------------------------------------------------------
+
+
+def derive_index(
+    source_index_dir: Path,
+    output_dir: Path,
+    truncate_dim: int | None,
+    quantization: str,
+) -> None:
+    """
+    Derive a new index from an existing one by slicing dimensions and quantizing.
+    Skips the heavy ML encoding step.
+    """
+    import lancedb
+
+    console.print(f"[bold cyan]Deriving index from source: {source_index_dir}")
+    source_db = lancedb.connect(str(source_index_dir))
+    source_table = source_db.open_table("index")
+    n_total = source_table.count_rows()
+
+    # Determine dimensions
+    sample_vec = source_table.to_pandas(limit=1)["vector"].iloc[0]
+    source_dim = len(sample_vec)
+    target_dim = truncate_dim if truncate_dim else source_dim
+
+    if target_dim > source_dim:
+        raise ValueError(f"Cannot truncate to {target_dim} from source dim {source_dim}")
+
+    console.print(f"[cyan]Source Dim: {source_dim} -> Target Dim: {target_dim} | Quant: {quantization}")
+
+    output_db = lancedb.connect(str(output_dir))
+    dest_table = create_lance_table(output_db, "index", target_dim, quantization)
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[cyan]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+    ) as progress:
+        task = progress.add_task("Deriving vectors", total=n_total)
+        
+        for batch in source_table.to_batches():
+            df = pl.from_arrow(batch)
+            vecs = np.stack(df["vector"].to_numpy())
+            
+            # Truncate and re-normalize (MRL)
+            if target_dim < source_dim:
+                vecs = vecs[:, :target_dim]
+                norms = np.linalg.norm(vecs, axis=1, keepdims=True)
+                norms = np.where(norms == 0, 1.0, norms)
+                vecs = (vecs / norms).astype(np.float32)
+            
+            vecs_q = apply_quantization(vecs, quantization)
+            
+            rows = []
+            for i in range(len(df)):
+                rows.append({
+                    "entity_id": df["entity_id"][i],
+                    "text": df["text"][i],
+                    "vector": vecs_q[i].tolist()
+                })
+            
+            dest_table.add(rows)
+            progress.advance(task, len(df))
+
+    console.print(f"[green]Derivation complete. {n_total:,} rows written.")
+    build_lance_ann_index(dest_table, target_dim, quantization)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -366,11 +446,58 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Truncate MRL embeddings to this many dimensions",
     )
+    parser.add_argument(
+        "--source-index",
+        default=None,
+        help="Path to an existing LanceDB index to derive from (skips ML encoding)",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+
+    # ---- MODE: Derive Index ----
+    if args.source_index:
+        source_dir = Path(args.source_index)
+        output_dir = Path(args.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        if not source_dir.exists():
+            console.print(f"[red]Source index not found: {source_dir}")
+            sys.exit(1)
+            
+        t_start = time.perf_counter()
+        derive_index(
+            source_index_dir=source_dir,
+            output_dir=output_dir,
+            truncate_dim=args.truncate_dim,
+            quantization=args.quantization,
+        )
+        elapsed = time.perf_counter() - t_start
+        
+        # Load source metadata to preserve model info
+        source_meta_path = source_dir / "metadata.json"
+        if source_meta_path.exists():
+            with open(source_meta_path) as f:
+                metadata = json.load(f)
+        else:
+            metadata = {"model_key": args.model}
+            
+        metadata.update({
+            "derivation_source": str(source_dir),
+            "quantization": args.quantization,
+            "dim": args.truncate_dim or metadata.get("dim"),
+            "index_size_mb": round(get_dir_size_mb(output_dir), 2),
+            "build_timestamp": datetime.now(timezone.utc).isoformat(),
+            "build_time_sec": round(elapsed, 2),
+        })
+        
+        with open(output_dir / "metadata.json", "w") as f:
+            json.dump(metadata, f, indent=2)
+            
+        console.print(f"[bold green]Derived index built in {elapsed:.1f}s")
+        return
 
     # ---- Load configs ----
     with open(args.models_config) as f:

@@ -60,11 +60,19 @@ uv run python src/data/eval_set.py \
 
 ### 3. Evaluation
 
-**Quantization Options**
-When building a dense index, use the `--quantization` flag to control memory usage:
-- `--quantization fp32` (Default): 4 bytes per dimension (e.g. 768 dims = 3KB/vector)
-- `--quantization int8`: 1 byte per dimension (e.g. 768 dims = 768 bytes/vector)
-- `--quantization binary`: 1 bit per dimension (e.g. 768 dims = 96 bytes/vector)
+**Quantization & Index Derivation**
+When building a dense index, use the `--quantization` flag to control memory usage. To test multiple dimensions (MRL) and quantizations without re-running the heavy ML encoding, you can "derive" a new index directly from an existing one:
+
+```bash
+# 1. Build the base index (heavy ML encode - run once)
+uv run python src/eval/build_index.py --model gte_modernbert_base --serialization pipe --quantization fp32 --index-profiles data/processed/index.parquet --eval-profiles data/eval/eval_profiles.parquet --output-dir results/indexes/gte_modernbert_base_pipe_fp32 --device mps
+
+# 2. Derive a 64-dim int8 index (instant CPU-bound slice and quantize)
+uv run python src/eval/build_index.py --source-index results/indexes/gte_modernbert_base_pipe_fp32 --output-dir results/indexes/gte_64_int8 --truncate-dim 64 --quantization int8
+
+# 3. Evaluate the derived index
+uv run python src/eval/run_eval.py --model gte_modernbert_base --index-dir results/indexes/gte_64_int8 --eval-queries data/eval/eval_queries.parquet --output results/gte_64_int8.json --serialization pipe
+```
 
 ```bash
 # Build BM25 index and run evaluation

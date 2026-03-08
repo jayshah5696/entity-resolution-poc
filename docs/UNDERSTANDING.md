@@ -381,28 +381,31 @@ URL: https://wandb.ai/jayshah5696/entity-resolution-poc
 
 ---
 
-## 8. CURRENT STATE (March 7, 2026)
+## 8. CURRENT STATE (March 2026)
 
 ### What's Done
 
 - [x] 1.2M profile generation pipeline
 - [x] 600K triplet building with curriculum hard negatives
 - [x] 60K eval set (6 corruption buckets)
-- [x] BM25 eval harness (`run_bm25.py`)
-- [x] Dense eval harness (`run_eval.py`) with LanceDB ANN
+- [x] BM25 eval harness (`run_bm25.py`) using LanceDB native FTS (Tantivy)
+- [x] Dense eval harness (`run_eval.py`) with LanceDB ANN and batch-search optimizations
 - [x] `finetune.py` — local training script (MPS-compatible)
 - [x] `finetune_modal.py` — parallel Modal training for all 5 models
 - [x] Training data uploaded to HF Hub
 - [x] Modal secrets configured
 - [x] W&B project configured
+- [x] Native LanceDB Quantization (int8 and bit-packed binary)
+- [x] Index Derivation for fast dimensionality ablation (MRL) without re-encoding
 
 ### What's In Progress
 
-- [ ] **Modal fine-tuning run** — image build was stuck on flash-attn compilation. Fixed now (switched to debian_slim + uv_pip_install, dropped flash-attn). Next step: `git pull && modal run src/models/finetune_modal.py::run_all`
+- [ ] **Modal fine-tuning run** — Next step: `git pull && modal run src/models/finetune_modal.py::run_all`
 
 ### What's Pending After Fine-tuning
 
-- [ ] Build LanceDB indexes for all 5 fine-tuned models
+- [ ] Build base FP32 LanceDB indexes for all 5 fine-tuned models
+- [ ] Derive quantized/truncated indexes using `--source-index`
 - [ ] Run eval across all models × all 6 buckets
 - [ ] Aggregate results → `results/master_results.csv`
 - [ ] Fill experiment log in README
@@ -410,6 +413,14 @@ URL: https://wandb.ai/jayshah5696/entity-resolution-poc
 ---
 
 ## 9. KEY TECHNICAL DECISIONS & WHY
+
+### Why Index Derivation for Ablation?
+
+When running the dimensionality/quantization ablation study (Experiment 007), we need to test many combinations (e.g., 768-dim FP32, 256-dim int8, 64-dim binary). Running the deep learning encoder over 1.2M records for each combination would take days. 
+
+Instead, we use an **Index Derivation** strategy:
+1. We run the heavy GPU encoding exactly **once** to create the "Base Table" (768-dim FP32).
+2. For all other permutations, `build_index.py --source-index ...` streams the existing FP32 vectors directly from LanceDB, slices them to the target Matryoshka dimension, mathematically re-normalizes them, applies quantization, and writes a new index. This turns a 2-hour GPU job into a 2-minute CPU job.
 
 ### Why NOT hybrid retrieval?
 
@@ -557,25 +568,32 @@ entity-resolution-poc/
 # 1. Verify models are on HF Hub
 # https://huggingface.co/jayshah5696 — should see 5 er-*-pipe-ft repos
 
-# 2. For each fine-tuned model, build LanceDB index
+# 2. For each fine-tuned model, build the base FP32 LanceDB index
 uv run python src/eval/build_index.py \
     --model gte_modernbert_base \
-    --hf-model jayshah5696/er-gte-modernbert-base-pipe-ft \
+    --model-path jayshah5696/er-gte-modernbert-base-pipe-ft \
     --serialization pipe \
     --quantization fp32 \
     --index-profiles data/processed/index.parquet \
     --eval-profiles data/eval/eval_profiles.parquet \
     --output-dir results/indexes/gte_modernbert_base_pipe_ft_fp32
 
-# 3. Run eval for each model
+# 3. Derive any quantized/truncated indices you want to test (INSTANT CPU job)
+uv run python src/eval/build_index.py \
+    --source-index results/indexes/gte_modernbert_base_pipe_ft_fp32 \
+    --output-dir results/indexes/gte_64_int8 \
+    --truncate-dim 64 \
+    --quantization int8
+
+# 4. Run eval for each model/index variant
 uv run python src/eval/run_eval.py \
     --model gte_modernbert_base \
-    --index-dir results/indexes/gte_modernbert_base_pipe_ft_fp32 \
+    --index-dir results/indexes/gte_64_int8 \
     --eval-queries data/eval/eval_queries.parquet \
-    --output results/gte_modernbert_base_ft.json \
+    --output results/gte_64_int8.json \
     --serialization pipe
 
-# 4. Aggregate all results
+# 5. Aggregate all results
 uv run python src/eval/aggregate.py \
     --results-dir results/ \
     --output-csv results/master_results.csv \
