@@ -8,7 +8,7 @@
 
 ### The Problem
 
-6sense has ~500 million B2B contact records. When a user searches for a person, the production system uses **BM25 (lexical retrieval)**. BM25 works fine on clean, exact data. It falls apart on:
+A B2B company has ~500 million B2B contact records. When a user searches for a person, the production system uses **BM25 (lexical retrieval)**. BM25 works fine on clean, exact data. It falls apart on:
 
 - Abbreviated names: "Jon" vs "Jonathan", "Mike" vs "Michael"
 - Typos: "Smyth" vs "Smith", "Googel" vs "Google"

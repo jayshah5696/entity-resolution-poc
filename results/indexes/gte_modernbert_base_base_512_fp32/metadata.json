@@ -1,0 +1,14 @@
+{
+  "model_key": "gte_modernbert_base",
+  "hf_id": "Alibaba-NLP/gte-modernbert-base",
+  "serialization": "pipe",
+  "quantization": "fp32",
+  "dim": 512,
+  "n_records": 1000050,
+  "index_size_mb": 2154.14,
+  "build_timestamp": "2026-03-09T04:32:50.265407+00:00",
+  "device": "mps",
+  "model_path": null,
+  "build_time_sec": 75.58,
+  "derivation_source": "results/indexes/gte_modernbert_base_pipe_fp32"
+}
