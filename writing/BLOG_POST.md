@@ -88,7 +88,7 @@ Overall, the customized GTE-ModernBERT delivers an 0.966 global Recall@10, beati
 
 Fine-tuning the 137M parameter `nomic-v1.5` architecture presented a unique catastrophic forgetting challenge. 
 
-Nomic-v1.5 natively relies on rigid instruction prefixes (like `search_query: `) positioned structurally to route queries and documents into distinct vector endpoints. When we subjected it to standard MNRL targeting short structured strings, the optimizer shattered the foundational representations. The base model outright collapsed handling partial queries, dropping from 48.8% Recall@10 down to 15.2%. Its MRR@10 dropped from 0.850 (zero-shot) to 0.795 post fine-tuning.
+Nomic-v1.5 natively relies on rigid instruction prefixes (like `search_query: `) positioned structurally to route queries and documents into distinct vector endpoints. When we subjected it to standard MNRL targeting short structured strings, the optimizer shattered the foundational representations. The model outright collapsed handling partial queries, dropping from 48.8% Recall@10 down to 15.2% on missing field subsets. Its overall MRR@10 dropped from 0.850 (zero-shot) to 0.795 post fine-tuning.
 
 ### Table 1: Base Architecture Capabilities (FP32/None, Maximum Dimensions)
 
@@ -172,7 +172,7 @@ The following tables present the full ablation results for Matryoshka dimensions
 ### Model: `nomic_v15` (Fine-Tuned)
 | Dimensions | FP32 (MRR \| R@10 \| Size) | INT8 (MRR \| R@10 \| Size) | Binary (MRR \| R@10 \| Size) |
 |---|---|---|---|
-| 768D | **0.795** 🏆 \| 0.817 \| 3104.9MB | - | - |
+| 768D | 0.795 | 0.817 | 3104.9MB | - | - |
 
 ### Model: `nomic_v15` (Zero-Shot)
 | Dimensions | FP32 (MRR \| R@10 \| Size) | INT8 (MRR \| R@10 \| Size) | Binary (MRR \| R@10 \| Size) |
