@@ -1,0 +1,14 @@
+{
+  "model_key": "nomic_v15",
+  "hf_id": "nomic-ai/nomic-embed-text-v1.5",
+  "serialization": "pipe",
+  "quantization": "binary",
+  "dim": 64,
+  "n_records": 1000050,
+  "index_size_mb": 420.88,
+  "build_timestamp": "2026-03-09T09:07:46.283581+00:00",
+  "device": "mps",
+  "model_path": null,
+  "build_time_sec": 28.79,
+  "derivation_source": "results/indexes/nomic_v15_base_pipe"
+}
