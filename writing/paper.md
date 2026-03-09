@@ -114,12 +114,12 @@ graph TD
     E --> F[Curriculum MNRL + MRL]
     F --> G[Fine-Tuned Embedding Models]
     
-    subgraph Training Curriculum
+    subgraph TrainingCurriculum [Training Curriculum]
     F1[Epoch 1: 10% Hard Negs]
     F2[Epoch 2: 30% Hard Negs]
     F3[Epoch 3: 50% Hard Negs]
     end
-    F --> Training Curriculum
+    F --> TrainingCurriculum
     
     B -->|Base Encode| H[(FP32 Base Index)]
     H -->|Slice & Quantize| I[(Truncated INT8/Binary Indexes)]
