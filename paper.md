@@ -126,11 +126,11 @@ We evaluated 10,000 queries across six corruption buckets.
 
 Zero-shot embedding models underperformed BM25 across the board. However, fine-tuning aligned the embedding spaces perfectly with our retrieval task.
 
-![Overall MRR@10](plots/mrr_overall.png)
+![Overall MRR@10](results/plots/mrr_overall.png)
 
 BM25 scored a perfect 1.000 MRR@10 on pristine data. But its performance collapsed on partial records, dropping to 0.504 MRR@10 when both email and company were missing. Fine-tuning drastically improved the dense models on these hard queries.
 
-![Bucket Heatmap](plots/bucket_heatmap.png)
+![Bucket Heatmap](results/plots/bucket_heatmap.png)
 
 The fine-tuned `gte-modernbert-base` model achieved 0.917 overall MRR@10, matching BM25. Crucially, it reached 0.509 MRR@10 on the missing email/company bucket, and matched or beat BM25 on heavily corrupted buckets like domain mismatches and typos. The `bge-small` fine-tuned model showed similar resilience, proving that supervised dense retrieval fixes lexical failure modes.
 
@@ -143,7 +143,7 @@ The model relies heavily on explicit text prefixes (`search_query: ` and `search
 
 The core of our second hypothesis was that MRL allows for massive index compression. 
 
-![Dimensionality Ablation: BGE-Small](plots/bge_ablation.png)
+![Dimensionality Ablation: BGE-Small](results/plots/bge_ablation.png)
 
 MRL worked as intended. Truncating `bge-small` from 384 dimensions to 256 dimensions and applying int8 quantization yielded 0.907 overall MRR@10, an extremely minor drop from the full 384D FP32 baseline (0.898). This configuration requires a fraction of the memory of a full FP32 index. 
 
@@ -151,7 +151,7 @@ Binary quantization proved too destructive at low dimensions (dropping to 0.797 
 
 ### 5.4 Latency vs MRR Pareto Frontier
 
-![Latency vs MRR Pareto Frontier](plots/latency_pareto.png)
+![Latency vs MRR Pareto Frontier](results/plots/latency_pareto.png)
 
 Dense retrieval remained fast enough for production. The p50 latency for `bge-small` (256-dim, int8) was 17.46 ms against a 1-million record LanceDB index. The `minilm-l6` models clustered around 6-8 ms. While BM25 remained the fastest at 3.25 ms, the compressed dense models are well within acceptable latency bounds for the approximate nearest neighbor (ANN) stage of a two-stage retrieval pipeline.
 
@@ -194,114 +194,20 @@ The following table details the full grid of dimensionality and quantization abl
 BM25 is fast and cheap but fundamentally brittle. Fine-tuning small dense models on domain-specific corruptions fixes lexical failures. Matryoshka Representation Learning, combined with int8 quantization, compresses these dense models to fit inside strict production memory limits without catastrophic recall loss. We demonstrated that `gte-modernbert-base` and `bge-small` handle real-world dirty data better than BM25, providing a clear path to replacing lexical search over 500 million B2B records.
 
 ## Appendix: Comprehensive Ablation Grids
+The following tables present the full ablation results for Matryoshka dimensions against quantization levels, grouping the key metrics side-by-side to allow for direct evaluation of compression tradeoffs.
 
-The following tables present the full ablation results for Matryoshka dimensions against quantization levels, grouped by metric. This grid format allows for direct evaluation of compression tradeoffs.
-
-### Overall MRR@10
-
-**BGE-Small (Fine-Tuned)**
-
-| Dimensions | FP32 | INT8 | Binary |
-|------------|------|------|--------|
-| 384D | 0.898 | 0.906 | 0.906 |
-| 256D | 0.896 | 0.907 | 0.906 |
-| 128D | 0.885 | - | - |
-| 64D | - | - | - |
+### Model: `bge_small` (Fine-Tuned)
+| Dimensions | FP32 (MRR \| R@10 \| Size) | INT8 (MRR \| R@10 \| Size) | Binary (MRR \| R@10 \| Size) |
+|---|---|---|---|
+| 384D | **0.898** \| 0.932 \| 1616.8MB | **0.906** \| 0.941 \| 1726.2MB | **0.906** \| 0.940 \| 1680.4MB |
+| 256D | **0.896** \| 0.930 \| 1161.3MB | **0.907** \| 0.942 \| 1207.1MB | **0.906** \| 0.942 \| 1176.6MB |
+| 128D | **0.885** \| 0.921 \| 665.2MB | - | - |
 
 
-**MiniLM-L6 (Fine-Tuned)**
-
-| Dimensions | FP32 | INT8 | Binary |
-|------------|------|------|--------|
-| 384D | 0.895 | 0.902 | 0.902 |
-| 256D | 0.892 | 0.901 | 0.900 |
-| 128D | 0.881 | 0.902 | 0.898 |
-| 64D | 0.855 | 0.897 | 0.886 |
-
-
-### Overall Recall@10
-
-**BGE-Small (Fine-Tuned)**
-
-| Dimensions | FP32 | INT8 | Binary |
-|------------|------|------|--------|
-| 384D | 0.932 | 0.941 | 0.940 |
-| 256D | 0.930 | 0.942 | 0.942 |
-| 128D | 0.921 | - | - |
-| 64D | - | - | - |
-
-
-**MiniLM-L6 (Fine-Tuned)**
-
-| Dimensions | FP32 | INT8 | Binary |
-|------------|------|------|--------|
-| 384D | 0.928 | 0.935 | 0.934 |
-| 256D | 0.925 | 0.933 | 0.933 |
-| 128D | 0.916 | 0.934 | 0.931 |
-| 64D | 0.890 | 0.929 | 0.920 |
-
-
-### Overall Recall@1
-
-**BGE-Small (Fine-Tuned)**
-
-| Dimensions | FP32 | INT8 | Binary |
-|------------|------|------|--------|
-| 384D | 0.882 | 0.889 | 0.890 |
-| 256D | 0.880 | 0.890 | 0.889 |
-| 128D | 0.869 | - | - |
-| 64D | - | - | - |
-
-
-**MiniLM-L6 (Fine-Tuned)**
-
-| Dimensions | FP32 | INT8 | Binary |
-|------------|------|------|--------|
-| 384D | 0.879 | 0.886 | 0.886 |
-| 256D | 0.876 | 0.886 | 0.884 |
-| 128D | 0.866 | 0.886 | 0.882 |
-| 64D | 0.838 | 0.882 | 0.871 |
-
-
-### Index Size (MB)
-
-**BGE-Small (Fine-Tuned)**
-
-| Dimensions | FP32 | INT8 | Binary |
-|------------|------|------|--------|
-| 384D | 1616.8 | 1726.2 | 1680.4 |
-| 256D | 1161.3 | 1207.1 | 1176.6 |
-| 128D | 665.2 | - | - |
-| 64D | - | - | - |
-
-
-**MiniLM-L6 (Fine-Tuned)**
-
-| Dimensions | FP32 | INT8 | Binary |
-|------------|------|------|--------|
-| 384D | 1616.8 | 1726.2 | 1680.4 |
-| 256D | 1161.3 | 1207.1 | 1176.6 |
-| 128D | 665.2 | 688.0 | 672.8 |
-| 64D | 417.1 | 428.5 | 420.9 |
-
-
-### Latency p50 (ms)
-
-**BGE-Small (Fine-Tuned)**
-
-| Dimensions | FP32 | INT8 | Binary |
-|------------|------|------|--------|
-| 384D | 10.63 | 17.53 | 17.22 |
-| 256D | 17.81 | 17.46 | 18.40 |
-| 128D | 17.86 | - | - |
-| 64D | - | - | - |
-
-
-**MiniLM-L6 (Fine-Tuned)**
-
-| Dimensions | FP32 | INT8 | Binary |
-|------------|------|------|--------|
-| 384D | 8.06 | 14.37 | 13.78 |
-| 256D | 8.52 | 6.91 | 6.71 |
-| 128D | 6.51 | 6.79 | 6.57 |
-| 64D | 6.33 | 6.58 | 6.37 |
+### Model: `minilm_l6` (Fine-Tuned)
+| Dimensions | FP32 (MRR \| R@10 \| Size) | INT8 (MRR \| R@10 \| Size) | Binary (MRR \| R@10 \| Size) |
+|---|---|---|---|
+| 384D | **0.895** \| 0.928 \| 1616.8MB | **0.902** \| 0.935 \| 1726.2MB | **0.902** \| 0.934 \| 1680.4MB |
+| 256D | **0.892** \| 0.925 \| 1161.3MB | **0.901** \| 0.933 \| 1207.1MB | **0.900** \| 0.933 \| 1176.6MB |
+| 128D | **0.881** \| 0.916 \| 665.2MB | **0.902** \| 0.934 \| 688.0MB | **0.898** \| 0.931 \| 672.8MB |
+| 64D | **0.855** \| 0.890 \| 417.1MB | **0.897** \| 0.929 \| 428.5MB | **0.886** \| 0.920 \| 420.9MB |

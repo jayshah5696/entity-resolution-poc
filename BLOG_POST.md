@@ -139,7 +139,13 @@ Entity resolution on real-world data requires models that are robust to missing 
 
 By structuring a curriculum of realistic corruptions and applying Matryoshka learning paired with integer quantization, we compressed the needed memory strictly. The fine-tuned MiniLM-L6 model mapped to 128D (INT8) hit the 'Goldilocks' zone as it drastically reduced the index size while retaining speed. We shrunk the required index capability by over ~78%, pushed latency comfortably beneath the 7ms bound, and successfully maintained high Recall metrics on degraded queries. 
 
+
 Next time you hit a problem where text matches fail but semantic size is too heavy, consider fine-tuning a small model and deriving quantized outputs from a Matryoshka manifold. 
+
+These resulting fine-tuned checkpoints are public on HuggingFace:
+- [`jayshah5696/er-gte-modernbert-base-pipe-ft`](https://huggingface.co/jayshah5696/er-gte-modernbert-base-pipe-ft)
+- [`jayshah5696/er-bge-small-pipe-ft`](https://huggingface.co/jayshah5696/er-bge-small-pipe-ft)
+- [`jayshah5696/er-minilm-l6-pipe-ft`](https://huggingface.co/jayshah5696/er-minilm-l6-pipe-ft)
 
 For the full detailed ablation pipeline, including the direct LanceDB configurations—check out the [`entity-resolution-poc`](https://github.com/jayshah5696/entity-resolution-poc) source tree on our GitHub.
 ## Appendix: Complete Ablation Matrices
