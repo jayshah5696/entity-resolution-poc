@@ -321,12 +321,21 @@ def main() -> None:
     console.print(f"[green]LanceDB table opened. Rows: {table.count_rows():,}")
 
     # ---- Load encoder (queries only) ----
+    # If index dim < encoder's native dim, truncate queries to match (MRL)
+    encoder_native_dims = model_cfg.get("dims", [])
+    if encoder_native_dims and dim < encoder_native_dims[0]:
+        truncate_dim = dim
+        console.print(f"[cyan]MRL truncation: encoder {encoder_native_dims[0]}d -> index {dim}d")
+    else:
+        truncate_dim = None
+
     console.print(f"[bold cyan]Loading encoder: {args.model}...")
     encoder = load_encoder(
         model_key=args.model,
         model_cfg=model_cfg,
         device=args.device,
         model_path=args.model_path,
+        truncate_dim=truncate_dim,
     )
 
     # ---- Load eval queries ----

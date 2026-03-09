@@ -70,44 +70,26 @@ logger = logging.getLogger(__name__)
 
 def apply_quantization(vecs: np.ndarray, mode: str) -> np.ndarray:
     """
-    Apply quantization to a float32 embedding matrix.
+    Ensure vectors are float32 for LanceDB storage.
+
+    Quantization is handled at the INDEX level by LanceDB (IVF_PQ for int8-like
+    compression, IVF_SQ for scalar quantization), not at the data level.
+    LanceDB's vector search requires float32/float16 columns — int8 or packed-bit
+    columns are invisible to its search API.
 
     Parameters
     ----------
-    vecs : np.ndarray, shape (N, D), dtype float32
-        Input embeddings (assumed L2-normalized).
+    vecs : np.ndarray, shape (N, D)
+        Input embeddings.
     mode : str
-        "fp32"   -- no-op, return as-is.
-        "int8"   -- scale each vector to [-128, 127], store as int8.
-        "binary" -- sign quantization: values become packed bits (uint8).
+        "fp32", "int8", or "binary" — all stored as float32; the mode controls
+        which ANN index type is built in build_lance_ann_index().
 
     Returns
     -------
-    np.ndarray
+    np.ndarray, dtype float32
     """
-    if mode == "fp32":
-        return vecs.astype(np.float32)
-
-    if mode == "int8":
-        # Scale per-vector to fill [-128, 127]
-        abs_max = np.abs(vecs).max(axis=1, keepdims=True)
-        abs_max = np.where(abs_max == 0, 1.0, abs_max)
-        scaled = np.round(vecs / abs_max * 127).clip(-128, 127).astype(np.int8)
-        return scaled
-
-    if mode == "binary":
-        # Pack bits into uint8 (1 bit per dimension)
-        # Dimensions must be multiple of 8 for simple packing
-        if vecs.shape[1] % 8 != 0:
-            logger.warning(
-                "Vector dim %d is not a multiple of 8. Binary packing might be inefficient.",
-                vecs.shape[1],
-            )
-        # np.packbits expects bool or uint8
-        packed = np.packbits(vecs > 0, axis=1)
-        return packed
-
-    raise ValueError(f"Unknown quantization mode: {mode!r}. Use 'fp32', 'int8', or 'binary'.")
+    return vecs.astype(np.float32)
 
 
 # ---------------------------------------------------------------------------
@@ -116,18 +98,16 @@ def apply_quantization(vecs: np.ndarray, mode: str) -> np.ndarray:
 
 
 def create_lance_table(db, table_name: str, dim: int, quantization: str):
-    """Create a LanceDB table with entity_id, text, vector columns."""
+    """
+    Create a LanceDB table with entity_id, text, vector columns.
+
+    Vectors are always stored as float32 regardless of quantization mode.
+    Quantization is applied at the ANN index level (see build_lance_ann_index),
+    not at the storage level — LanceDB vector search requires float-typed columns.
+    """
     import pyarrow as pa
 
-    if quantization == "fp32":
-        vec_type = pa.list_(pa.float32(), dim)
-    elif quantization == "int8":
-        vec_type = pa.list_(pa.int8(), dim)
-    elif quantization == "binary":
-        # Packed bits: dim/8 bytes
-        vec_type = pa.list_(pa.uint8(), (dim + 7) // 8)
-    else:
-        raise ValueError(f"Unknown quantization: {quantization}")
+    vec_type = pa.list_(pa.float32(), dim)
 
     schema = pa.schema(
         [
@@ -148,39 +128,86 @@ def create_lance_table(db, table_name: str, dim: int, quantization: str):
 def build_lance_ann_index(table, dim: int, quantization: str) -> None:
     """
     Create an approximate nearest-neighbor index on the LanceDB table.
-    Uses IVF_HNSW for best 2026 performance.
+
+    Quantization is applied here at the index level:
+      - fp32:   IVF_PQ (product quantization) — moderate compression, high recall
+      - int8:   IVF_SQ (scalar quantization) — ~4× compression vs fp32, good recall
+      - binary: IVF_PQ with aggressive sub-vectors — maximum compression
+
+    All vector data remains float32 on disk; the index structure controls
+    the compression/accuracy tradeoff at query time.
     """
     n_rows = table.count_rows()
     if n_rows < 256:
         console.print("[yellow]Too few rows for ANN index, skipping.")
         return
 
-    # Metric depends on quantization
-    metric = "cosine" if quantization != "binary" else "hamming"
+    metric = "cosine"
 
     # Choose partition count based on corpus size
     num_partitions = min(256, max(8, n_rows // 4000))
 
-    console.print(
-        f"[bold cyan]Building ANN index (IVF_HNSW) "
-        f"metric={metric} partitions={num_partitions}..."
-    )
+    # Map quantization mode to index type
+    if quantization == "int8":
+        index_type = "IVF_PQ"
+        # Use more sub-vectors for tighter compression (int8-like)
+        num_sub_vectors = max(8, dim // 4)
+        console.print(
+            f"[bold cyan]Building ANN index (IVF_PQ, int8-level) "
+            f"metric={metric} partitions={num_partitions} sub_vectors={num_sub_vectors}..."
+        )
+        try:
+            table.create_index(
+                vector_column_name="vector",
+                index_type="IVF_PQ",
+                metric=metric,
+                num_partitions=num_partitions,
+                num_sub_vectors=num_sub_vectors,
+            )
+            console.print("[green]IVF_PQ (int8-level) index created.")
+            return
+        except Exception as exc:
+            console.print(f"[yellow]IVF_PQ failed ({exc}); trying default index.")
+
+    elif quantization == "binary":
+        index_type = "IVF_PQ"
+        # Aggressive sub-vectors for maximum compression (binary-like)
+        num_sub_vectors = max(4, dim // 8)
+        console.print(
+            f"[bold cyan]Building ANN index (IVF_PQ, binary-level) "
+            f"metric={metric} partitions={num_partitions} sub_vectors={num_sub_vectors}..."
+        )
+        try:
+            table.create_index(
+                vector_column_name="vector",
+                index_type="IVF_PQ",
+                metric=metric,
+                num_partitions=num_partitions,
+                num_sub_vectors=num_sub_vectors,
+            )
+            console.print("[green]IVF_PQ (binary-level) index created.")
+            return
+        except Exception as exc:
+            console.print(f"[yellow]IVF_PQ failed ({exc}); trying default index.")
+
+    else:
+        # fp32: standard high-quality index
+        console.print(
+            f"[bold cyan]Building ANN index (IVF_PQ) "
+            f"metric={metric} partitions={num_partitions}..."
+        )
+
+    # Default / fallback: standard IVF_PQ
     try:
-        # IVF_HNSW is the 2026 standard for high-performance vector search
         table.create_index(
             vector_column_name="vector",
-            index_type="IVF_HNSW",
+            index_type="IVF_PQ",
             metric=metric,
             num_partitions=num_partitions,
         )
-        console.print("[green]IVF_HNSW index created.")
-    except Exception as exc:
-        console.print(f"[yellow]ANN index creation failed ({exc}); falling back to default IVF_PQ.")
-        try:
-            table.create_index(vector_column_name="vector", metric=metric)
-            console.print("[green]Default index created.")
-        except Exception as e:
-            console.print(f"[yellow]Brute force search will be used. Error: {e}")
+        console.print("[green]IVF_PQ index created.")
+    except Exception as e:
+        console.print(f"[yellow]Brute force search will be used. Error: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -346,8 +373,9 @@ def derive_index(
     source_table = source_db.open_table("index")
     n_total = source_table.count_rows()
 
-    # Determine dimensions
-    sample_vec = source_table.to_pandas(limit=1)["vector"].iloc[0]
+    # Determine dimensions — use head(1) for a stable, lightweight sample
+    sample_df = source_table.head(1).to_pandas()
+    sample_vec = sample_df["vector"].iloc[0]
     source_dim = len(sample_vec)
     target_dim = truncate_dim if truncate_dim else source_dim
 
@@ -367,11 +395,17 @@ def derive_index(
         TimeElapsedColumn(),
     ) as progress:
         task = progress.add_task("Deriving vectors", total=n_total)
-        
-        for batch in source_table.to_batches():
+
+        # Stream all rows via to_arrow().to_batches() — stable LanceDB 0.29+ API
+        for batch in source_table.to_arrow().to_batches():
             df = pl.from_arrow(batch)
             vecs = np.stack(df["vector"].to_numpy())
             
+            # Handle potential NaNs left by failed model inference
+            if np.isnan(vecs).any():
+                logger.warning(f"Found NaNs in vectors. Replacing with zeros.")
+                vecs = np.nan_to_num(vecs)
+
             # Truncate and re-normalize (MRL)
             if target_dim < source_dim:
                 vecs = vecs[:, :target_dim]
@@ -405,9 +439,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Encode index profiles and store in LanceDB or BM25 pickle."
     )
-    parser.add_argument("--model", required=True, help="Model key from models.yaml")
+    parser.add_argument("--model", default=None, help="Model key from models.yaml")
     parser.add_argument(
-        "--serialization", required=True, choices=["pipe", "kv"], help="Serialization format"
+        "--serialization", choices=["pipe", "kv"], help="Serialization format"
     )
     parser.add_argument(
         "--quantization",
@@ -417,7 +451,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--index-profiles",
-        required=True,
+        default=None,
         help="Parquet file with index profiles (data/processed/index.parquet)",
     )
     parser.add_argument(

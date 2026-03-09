@@ -1,0 +1,14 @@
+{
+  "model_key": "bge_small",
+  "hf_id": "BAAI/bge-small-en-v1.5",
+  "serialization": "pipe",
+  "quantization": "int8",
+  "dim": 256,
+  "n_records": 1000050,
+  "index_size_mb": 1207.12,
+  "build_timestamp": "2026-03-09T02:20:39.751833+00:00",
+  "device": "mps",
+  "model_path": null,
+  "build_time_sec": 53.54,
+  "derivation_source": "results/indexes/bge_small_base_pipe"
+}

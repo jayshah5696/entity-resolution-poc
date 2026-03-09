@@ -197,22 +197,31 @@ class SentenceTransformerEncoder(BaseEncoder):
         if prompt_name is not None:
             encode_kwargs["prompt_name"] = prompt_name
 
-        n_batches = max(1, len(texts) // batch_size + (1 if len(texts) % batch_size else 0))
         all_vecs: list[np.ndarray] = []
 
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[bold cyan]{task.description}"),
-            BarColumn(),
-            MofNCompleteColumn(),
-            TimeElapsedColumn(),
-        ) as progress:
-            task = progress.add_task(desc, total=len(texts))
+        # Skip Rich progress bar for small batches (< 64 texts) — avoids
+        # flooding logs with "Encoding queries 1/1" during latency measurement.
+        show_progress = len(texts) >= 64
+
+        if show_progress:
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[bold cyan]{task.description}"),
+                BarColumn(),
+                MofNCompleteColumn(),
+                TimeElapsedColumn(),
+            ) as progress:
+                task = progress.add_task(desc, total=len(texts))
+                for i in range(0, len(texts), batch_size):
+                    batch = texts[i : i + batch_size]
+                    vecs = self._model.encode(batch, **encode_kwargs)
+                    all_vecs.append(vecs.astype(np.float32))
+                    progress.advance(task, len(batch))
+        else:
             for i in range(0, len(texts), batch_size):
                 batch = texts[i : i + batch_size]
                 vecs = self._model.encode(batch, **encode_kwargs)
                 all_vecs.append(vecs.astype(np.float32))
-                progress.advance(task, len(batch))
 
         result = np.concatenate(all_vecs, axis=0)
 

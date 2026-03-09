@@ -1,0 +1,14 @@
+{
+  "model_key": "minilm_l6",
+  "hf_id": "sentence-transformers/all-MiniLM-L6-v2",
+  "serialization": "pipe",
+  "quantization": "fp32",
+  "dim": 64,
+  "n_records": 1000050,
+  "index_size_mb": 417.07,
+  "build_timestamp": "2026-03-09T01:01:42.846620+00:00",
+  "device": "mps",
+  "model_path": null,
+  "build_time_sec": 31.99,
+  "derivation_source": "results/indexes/minilm_l6_base_pipe"
+}

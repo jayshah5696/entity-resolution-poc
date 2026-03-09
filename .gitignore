@@ -5,7 +5,7 @@ __pycache__/
 *.so
 *.pyd
 *.pyo
-
+backup_indexes/*
 # Distribution / packaging
 .Python
 build/
