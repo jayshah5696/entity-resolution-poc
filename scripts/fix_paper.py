@@ -1,6 +1,6 @@
 import re
 
-with open('paper.md', 'r') as f:
+with open('writing/paper.md', 'r') as f:
     content = f.read()
 
 # Make sure image paths are relative to where the markdown is viewed
@@ -10,6 +10,6 @@ content = content.replace('![Bucket Heatmap](plots/bucket_heatmap.png)', '![Buck
 content = content.replace('![Dimensionality Ablation: BGE-Small](plots/bge_ablation.png)', '![Dimensionality Ablation: BGE-Small](results/plots/bge_ablation.png)')
 content = content.replace('![Latency vs MRR Pareto Frontier](plots/latency_pareto.png)', '![Latency vs MRR Pareto Frontier](results/plots/latency_pareto.png)')
 
-with open('paper.md', 'w') as f:
+with open('writing/paper.md', 'w') as f:
     f.write(content)
 print("Fixed image paths in paper.md")

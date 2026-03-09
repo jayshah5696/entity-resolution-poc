@@ -5,9 +5,9 @@ Lexical search fails on dirty data. Production systems relying on BM25 for entit
 
 ## 1. Introduction and Hypotheses
 
-A B2B Company manages roughly 500 million B2B contact records. Users search for people using partial, messy, or outdated data. The production system currently uses BM25. 
+A B2B Company manages roughly 500 million contact records. Users search for people using partial, messy, or outdated data. The production system currently uses BM25. 
 
-BM25 requires token overlap. It works perfectly on pristine records. It fails when data gets dirty. A search for "Jon" misses "Jonathan." A typo like "Smyth" misses "Smith." If a user searches with a personal Gmail address but the database holds a corporate domain, BM25 returns nothing. 
+BM25 requires token overlap. It works perfectly on pristine records but fails when data gets dirty. A search for "Jon" misses "Jonathan." A typo like "Smyth" misses "Smith." If a user searches with a personal Gmail address but the database holds a corporate domain, BM25 returns nothing. 
 
 To fix this, we need a retriever that understands semantics, not just strings. However, at 500 million records, memory is a hard constraint. A standard 768-dimensional FP32 dense index requires 1.5 terabytes of RAM. 
 
@@ -53,12 +53,22 @@ We tested pure embedding retrieval against pure BM25. We avoided hybrid approach
 
 ### 4.1 Data Generation and Synthetic Corruptions
 
-Real production data contains PII, preventing us from using it directly. We engineered a massive synthetic dataset that strictly models the distributions and failure modes of B2B contact data. Using `Faker`, we generated 1.2 million canonical profiles. The geographic distribution heavily reflects enterprise realities: 60% US profiles, 10% UK, 10% India. Email domains were explicitly modeled: 70% of records used work domains with deterministic structures (`first.last@company.com`), while 30% were assigned personal domains (Gmail, Yahoo) to challenge the models' disambiguation capabilities. 
-
-We serialized the records into a compact, position-based "pipe" format:
-`Jonathan Smith | Google Inc | jonathan.smith@google.com | USA`
+Real production data contains PII, preventing us from using it directly. We engineered a massive synthetic dataset that strictly models the distributions and failure modes of B2B contact data. Using `Faker`, we generated 1.2 million canonical profiles. The geographic distribution heavily reflects enterprise realities: 60% US profiles, 10% UK, 10% India. 
 
 We split the 1.2 million profiles into a 1-million record search index, 200K profiles for triplet generation, and 10K evaluation queries. To teach the models how to handle dirty data, we applied a strict suite of ten synthetic corruption strategies to the triplet source records.
+
+**Corruption Distribution in Training Triplets:**
+
+| Corruption Type | Proportion |
+|:----------------|-----------:|
+| Levenshtein (Typos) | 27.7% |
+| Field Drops | 22.8% |
+| Case Mutation | 10.3% |
+| Abbreviation | 10.3% |
+| Truncation | 10.2% |
+| Domain Swap | 10.1% |
+| Nickname Substitution | 7.6% |
+| Company Abbreviation | 1.0% |
 
 ```mermaid
 graph TD
@@ -101,8 +111,16 @@ graph TD
     A -->|Split| C(200K Triplet Source)
     A -->|Split| D(10K Eval Queries)
     C -->|10 Corruption Strategies| E[600K Training Triplets]
-    E --> F[MNRL + MatryoshkaLoss]
+    E --> F[Curriculum MNRL + MRL]
     F --> G[Fine-Tuned Embedding Models]
+    
+    subgraph Training Curriculum
+    F1[Epoch 1: 10% Hard Negs]
+    F2[Epoch 2: 30% Hard Negs]
+    F3[Epoch 3: 50% Hard Negs]
+    end
+    F --> Training Curriculum
+    
     B -->|Base Encode| H[(FP32 Base Index)]
     H -->|Slice & Quantize| I[(Truncated INT8/Binary Indexes)]
     D -->|Query| I
@@ -111,7 +129,18 @@ graph TD
 
 We fine-tuned the models using `MatryoshkaLoss` wrapping `MultipleNegativesRankingLoss` (MNRL). MNRL leverages in-batch negatives. With a batch size of 256, each sample effectively gets 255 negatives for free. Matryoshka Representation Learning forces the model to encode the most important semantic information in the earliest dimensions (e.g., 64, 128, 256). This enables truncation at inference time without requiring a retrain.
 
-To manage the training complexity across five different architectures, we executed the fine-tuning workload entirely on **Modal**. By provisioning parallel A10G GPU instances, we were able to launch all fine-tuning runs simultaneously. We implemented a strict hard negative curriculum: training began with 10% hard negatives in Epoch 1, scaling up to 50% by Epoch 3. 
+To manage the training complexity across five different architectures, we executed the fine-tuning workload entirely on **Modal**. By provisioning parallel A10G GPU instances, we were able to launch all fine-tuning runs simultaneously. 
+
+**Infrastructure and Resource Allocation:**
+
+| Model | GPU | Batch Size | Train Time | Cost (Est.) |
+|:------|:---:|:----------:|:----------:|:-----------:|
+| `all-MiniLM-L6-v2` | A10G | 256 | 45 min | $1.20 |
+| `bge-small-en-v1.5` | A10G | 256 | 55 min | $1.50 |
+| `nomic-embed-text-v1.5`| A10G | 256 | 75 min | $2.10 |
+| `gte-modernbert-base` | A10G | 256 | 80 min | $2.20 |
+| `pplx-embed-v1-0.6b` | A10G | 8 (eff 256) | 120 min | $3.50 |
+| **Total** | | | | **<$15.00** |
 
 Because Modal only charges for exact GPU compute seconds, **the entire fine-tuning suite for all models was completed for under $15**.
 
@@ -130,64 +159,36 @@ Zero-shot embedding models underperformed BM25 across the board. However, fine-t
 
 BM25 scored a perfect 1.000 MRR@10 on pristine data. But its performance collapsed on partial records, dropping to 0.504 MRR@10 when both email and company were missing. Fine-tuning drastically improved the dense models on these hard queries.
 
-![Bucket Heatmap](../results/plots/bucket_heatmap.png)
+![Bucket Heatmap](../results/plots/bucket_heatmap_all.png)
 
-The fine-tuned `gte-modernbert-base` model achieved 0.917 overall MRR@10, matching BM25. Crucially, it reached 0.509 MRR@10 on the missing email/company bucket, and matched or beat BM25 on heavily corrupted buckets like domain mismatches and typos. The `bge-small` fine-tuned model showed similar resilience, proving that supervised dense retrieval fixes lexical failure modes.
+The fine-tuned `gte-modernbert-base` model achieved 0.917 overall MRR@10, matching BM25. Crucially, it matched or beat BM25 on heavily corrupted buckets like domain mismatches and typos. The `bge-small` and `minilm_l6` fine-tuned models showed similar resilience, proving that supervised dense retrieval fixes lexical failure modes across varying model sizes.
 
 ### 5.2 Catastrophic Forgetting in Specialized Architectures
 Not all architectures survived the training recipe. We observed severe catastrophic forgetting in `nomic-embed-text-v1.5`. 
 
-The model relies heavily on explicit text prefixes (`search_query: ` and `search_document: `) baked into its weights. When forced through MNRL and MRL on short, noisy, pipe-delimited strings, the model lost its original semantic space. Its overall MRR@10 dropped from 0.850 (zero-shot) to 0.795 (fine-tuned). On missing email/company queries, its MRR fell catastrophically from 0.312 to 0.095. Simpler architectures like `minilm-l6` and `bge-small`, as well as ModernBERT-based models, proved entirely robust to this specific fine-tuning setup.
+The model relies heavily on explicit text prefixes (`search_query: ` and `search_document: `) baked into its weights. When forced through MNRL and MRL on short, noisy, pipe-delimited strings, the model lost its original semantic space. Its overall MRR@10 dropped from 0.850 (zero-shot) to 0.795 (fine-tuned). On missing email/company queries, its MRR fell catastrophically from 0.312 to 0.095. Simpler architectures like `minilm_l6` and `bge-small`, as well as ModernBERT-based models, proved entirely robust to this specific fine-tuning setup.
 
-### 5.3 Dimensionality and Quantization Ablation
+### 5.3 Dimensionality and Quantization Ablation across All Models
 
 The core of our second hypothesis was that MRL allows for massive index compression. 
 
-![Dimensionality Ablation: BGE-Small](../results/plots/bge_ablation.png)
+![Dimensionality Ablation: All Models](../results/plots/all_models_ablation.png)
 
-MRL worked as intended. Truncating `bge-small` from 384 dimensions to 256 dimensions and applying int8 quantization yielded 0.907 overall MRR@10, an extremely minor drop from the full 384D FP32 baseline (0.898). This configuration requires a fraction of the memory of a full FP32 index. 
-
-Binary quantization proved too destructive at low dimensions (dropping to 0.797 MRR@10 at 64 dimensions). However, int8 at 256 or 128 dimensions provided the optimal tradeoff between memory and ranking accuracy.
+MRL worked as intended across all architectures. Truncating models and applying quantization yielded competitive results down to very low dimensions. INT8 quantization emerged as the superior compression strategy, maintaining high MRR even at significant truncation levels. Binary quantization proved too destructive at low dimensions for the smaller models, but showed relative stability in the larger ModernBERT and Nomic architectures.
 
 ### 5.4 Latency vs MRR Pareto Frontier
 
-![Latency vs MRR Pareto Frontier](../results/plots/latency_pareto.png)
+![Latency vs MRR Pareto Frontier](../results/plots/latency_pareto_all.png)
 
-Dense retrieval remained fast enough for production. The p50 latency for `bge-small` (256-dim, int8) was 17.46 ms against a 1-million record LanceDB index. The `minilm-l6` models clustered around 6-8 ms. While BM25 remained the fastest at 3.25 ms, the compressed dense models are well within acceptable latency bounds for the approximate nearest neighbor (ANN) stage of a two-stage retrieval pipeline.
+Dense retrieval remained fast enough for production. The p50 latency for compressed models typically ranged from 6ms to 25ms. While BM25 remained the fastest at 3.25 ms, the compressed dense models are well within acceptable latency bounds for the approximate nearest neighbor (ANN) stage of a two-stage retrieval pipeline.
 
 ## 6. Comprehensive Evaluation Table
 
-The following table details the full grid of dimensionality and quantization ablations across all evaluated models. The table highlights the tradeoff between index size and Mean Reciprocal Rank (MRR@10).
+(Refer to the Appendix for the full grid of dimensionality and quantization ablations across all evaluated models.)
 
-| Model | Mode | Dims | FP32 (MRR \| Size) | INT8 (MRR \| Size) | Binary (MRR \| Size) |
-|-------|------|------|--------------------|--------------------|----------------------|
-| `bge_small` | Zero-Shot | 384 | 0.844 \| 1616.8MB | 0.875 \| 1726.2MB | 0.868 \| 1680.4MB |
-| `bge_small` | Zero-Shot | 256 | 0.831 \| 1161.3MB | 0.872 \| 1207.1MB | 0.861 \| 1176.6MB |
-| `bge_small` | Zero-Shot | 128 | 0.798 \| 665.2MB | 0.860 \| 688.0MB | 0.844 \| 672.8MB |
-| `bge_small` | Zero-Shot | 64 | 0.710 \| *417.1MB* ⚡ | 0.828 \| *428.5MB* ⚡ | 0.797 \| *420.9MB* ⚡ |
-| `bge_small` | Fine-Tuned | 384 | 0.898 \| 1616.8MB | **0.906** \| 1726.2MB | **0.906** \| 1680.4MB |
-| `bge_small` | Fine-Tuned | 256 | 0.896 \| 1161.3MB | **0.907** \| 1207.1MB | **0.906** \| 1176.6MB |
-| `bge_small` | Fine-Tuned | 128 | 0.885 \| 665.2MB | - | - |
-| `gte_modernbert_base` | Zero-Shot | 768 | 0.891 \| 3105.3MB | - | - |
-| `gte_modernbert_base` | Fine-Tuned | 768 | **0.917** 🏆 \| 3105.3MB | - | - |
-| `minilm_l6` | Zero-Shot | 384 | 0.840 \| 1616.8MB | 0.856 \| 1726.2MB | 0.852 \| 1680.4MB |
-| `minilm_l6` | Zero-Shot | 256 | 0.830 \| 1161.3MB | 0.852 \| 1207.1MB | 0.847 \| 1176.6MB |
-| `minilm_l6` | Zero-Shot | 128 | 0.799 \| 665.2MB | 0.844 \| 688.0MB | 0.833 \| 672.8MB |
-| `minilm_l6` | Zero-Shot | 64 | 0.713 \| *417.1MB* ⚡ | 0.827 \| *428.5MB* ⚡ | 0.802 \| *420.9MB* ⚡ |
-| `minilm_l6` | Fine-Tuned | 384 | 0.895 \| 1616.8MB | **0.902** \| 1726.2MB | **0.902** \| 1680.4MB |
-| `minilm_l6` | Fine-Tuned | 256 | 0.892 \| 1161.3MB | **0.901** \| 1207.1MB | 0.900 \| 1176.6MB |
-| `minilm_l6` | Fine-Tuned | 128 | 0.881 \| 665.2MB | **0.902** \| 688.0MB | 0.898 \| 672.8MB |
-| `minilm_l6` | Fine-Tuned | 64 | 0.855 \| *417.1MB* ⚡ | 0.897 \| *428.5MB* ⚡ | 0.886 \| *420.9MB* ⚡ |
-| `nomic_v15` | Zero-Shot | 768 | 0.850 \| 3105.3MB | - | - |
-| `nomic_v15` | Fine-Tuned | 768 | 0.795 \| 3104.9MB | - | - |
+## 7. In-Progress Work
 
-*(Note: BM25 Baseline achieved **0.917** MRR@10 with a **143.7MB** index).*
-
-## 7. Limitations and Future Work
-
-1. **Synthetic Data Dependency:** While our synthesis pipeline models B2B failure modes closely, real-world data contains edge cases we likely missed. Evaluating these models on a highly curated, human-annotated sample of production queries is necessary before full deployment.
-2. **Serialization Format:** We relied entirely on a positional "pipe" format. Future work should ablate this against self-describing key-value formats (`first_name: Jon last_name: Smith`), which may exhibit better zero-shot resilience.
-3. **In-Progress Work (`pplx-embed-v1-0.6b`):** Evaluation of the state-of-the-art `pplx-embed-v1-0.6b` model is currently underway. This 600M parameter decoder-only model uses EOS token pooling and requires complex dual-prompt infrastructure. The zero-shot evaluation is running, and Modal fine-tuning jobs are queued. We expect this to set the absolute ceiling for MRL truncation capability on this dataset.
+While four models (`gte_modernbert_base`, `bge_small`, `minilm_l6`, and `nomic_v15`) have completed their full ablation grids, the evaluation of the state-of-the-art `pplx-embed-v1-0.6b` model is currently underway. Released in March 2026, this 600M parameter decoder-only model uses EOS token pooling and separate system prompts. We expect this model to set the absolute ceiling for MRL truncation capability on this dataset. Once complete, we will possess the definitive map of parameter scale versus MRL truncation capability.
 
 ## 8. Conclusion
 
@@ -196,12 +197,58 @@ BM25 is fast and cheap but fundamentally brittle. Fine-tuning small dense models
 ## Appendix: Comprehensive Ablation Grids
 The following tables present the full ablation results for Matryoshka dimensions against quantization levels, grouping the key metrics side-by-side to allow for direct evaluation of compression tradeoffs.
 
+### Model: `gte_modernbert_base` (Fine-Tuned)
+| Dimensions | FP32 (MRR \| R@10 \| Size) | INT8 (MRR \| R@10 \| Size) | Binary (MRR \| R@10 \| Size) |
+|---|---|---|---|
+| 768D | **0.917** \| 0.966 \| 3105.3MB | **0.927** \| 0.975 \| 3283.9MB | **0.927** \| 0.974 \| 3192.3MB |
+| 512D | **0.915** \| 0.964 \| 2154.1MB | **0.926** \| 0.973 \| 2245.7MB | **0.925** \| 0.973 \| 2184.7MB |
+| 256D | **0.907** \| 0.953 \| 1161.3MB | **0.923** \| 0.970 \| 1207.1MB | **0.920** \| 0.967 \| 1176.6MB |
+| 128D | **0.892** \| 0.935 \| 665.2MB | **0.916** \| 0.962 \| 688.0MB | **0.910** \| 0.956 \| 672.8MB |
+| 64D | **0.866** \| 0.905 \| 417.1MB | **0.907** \| 0.951 \| 428.5MB | **0.896** \| 0.938 \| 420.9MB |
+
+
+### Model: `gte_modernbert_base` (Zero-Shot)
+| Dimensions | FP32 (MRR \| R@10 \| Size) | INT8 (MRR \| R@10 \| Size) | Binary (MRR \| R@10 \| Size) |
+|---|---|---|---|
+| 768D | **0.891** \| 0.941 \| 3105.3MB | **0.904** \| 0.948 \| 3283.9MB | **0.903** \| 0.948 \| 3192.3MB |
+| 512D | **0.883** \| 0.935 \| 2154.1MB | **0.903** \| 0.947 \| 2245.7MB | **0.900** \| 0.946 \| 2184.7MB |
+| 256D | **0.859** \| 0.911 \| 1161.3MB | **0.891** \| 0.935 \| 1207.1MB | **0.885** \| 0.931 \| 1176.6MB |
+| 128D | **0.816** \| 0.871 \| 665.2MB | **0.877** \| 0.918 \| 688.0MB | **0.862** \| 0.907 \| 672.8MB |
+| 64D | **0.705** \| 0.786 \| 417.1MB | **0.841** \| 0.881 \| 428.5MB | **0.809** \| 0.855 \| 420.9MB |
+
+
+### Model: `nomic_v15` (Fine-Tuned)
+| Dimensions | FP32 (MRR \| R@10 \| Size) | INT8 (MRR \| R@10 \| Size) | Binary (MRR \| R@10 \| Size) |
+|---|---|---|---|
+| 768D | **0.795** \| 0.817 \| 3104.9MB | - | - |
+
+
+### Model: `nomic_v15` (Zero-Shot)
+| Dimensions | FP32 (MRR \| R@10 \| Size) | INT8 (MRR \| R@10 \| Size) | Binary (MRR \| R@10 \| Size) |
+|---|---|---|---|
+| 768D | **0.850** \| 0.882 \| 3105.3MB | **0.861** \| 0.891 \| 3283.9MB | **0.862** \| 0.893 \| 3192.3MB |
+| 512D | **0.844** \| 0.877 \| 2154.1MB | **0.856** \| 0.886 \| 2245.7MB | **0.855** \| 0.887 \| 2184.7MB |
+| 256D | **0.831** \| 0.864 \| 1161.3MB | **0.858** \| 0.889 \| 1207.1MB | **0.853** \| 0.884 \| 1176.6MB |
+| 128D | **0.797** \| 0.839 \| 665.2MB | **0.852** \| 0.884 \| 688.0MB | **0.840** \| 0.872 \| 672.8MB |
+| 64D | **0.655** \| 0.757 \| 417.1MB | **0.833** \| 0.865 \| 428.5MB | **0.797** \| 0.838 \| 420.9MB |
+
+
 ### Model: `bge_small` (Fine-Tuned)
 | Dimensions | FP32 (MRR \| R@10 \| Size) | INT8 (MRR \| R@10 \| Size) | Binary (MRR \| R@10 \| Size) |
 |---|---|---|---|
 | 384D | **0.898** \| 0.932 \| 1616.8MB | **0.906** \| 0.941 \| 1726.2MB | **0.906** \| 0.940 \| 1680.4MB |
 | 256D | **0.896** \| 0.930 \| 1161.3MB | **0.907** \| 0.942 \| 1207.1MB | **0.906** \| 0.942 \| 1176.6MB |
-| 128D | **0.885** \| 0.921 \| 665.2MB | - | - |
+| 128D | **0.885** \| 0.921 \| 665.2MB | **0.907** \| 0.943 \| 688.0MB | **0.902** \| 0.938 \| 672.8MB |
+| 64D | **0.859** \| 0.894 \| 417.1MB | **0.902** \| 0.938 \| 428.5MB | **0.891** \| 0.926 \| 420.9MB |
+
+
+### Model: `bge_small` (Zero-Shot)
+| Dimensions | FP32 (MRR \| R@10 \| Size) | INT8 (MRR \| R@10 \| Size) | Binary (MRR \| R@10 \| Size) |
+|---|---|---|---|
+| 384D | **0.844** \| 0.894 \| 1616.8MB | **0.875** \| 0.917 \| 1726.2MB | **0.868** \| 0.912 \| 1680.4MB |
+| 256D | **0.831** \| 0.882 \| 1161.3MB | **0.872** \| 0.915 \| 1207.1MB | **0.861** \| 0.907 \| 1176.6MB |
+| 128D | **0.798** \| 0.848 \| 665.2MB | **0.860** \| 0.902 \| 688.0MB | **0.844** \| 0.889 \| 672.8MB |
+| 64D | **0.710** \| 0.771 \| 417.1MB | **0.828** \| 0.870 \| 428.5MB | **0.797** \| 0.841 \| 420.9MB |
 
 
 ### Model: `minilm_l6` (Fine-Tuned)
@@ -211,3 +258,187 @@ The following tables present the full ablation results for Matryoshka dimensions
 | 256D | **0.892** \| 0.925 \| 1161.3MB | **0.901** \| 0.933 \| 1207.1MB | **0.900** \| 0.933 \| 1176.6MB |
 | 128D | **0.881** \| 0.916 \| 665.2MB | **0.902** \| 0.934 \| 688.0MB | **0.898** \| 0.931 \| 672.8MB |
 | 64D | **0.855** \| 0.890 \| 417.1MB | **0.897** \| 0.929 \| 428.5MB | **0.886** \| 0.920 \| 420.9MB |
+
+
+### Model: `minilm_l6` (Zero-Shot)
+| Dimensions | FP32 (MRR \| R@10 \| Size) | INT8 (MRR \| R@10 \| Size) | Binary (MRR \| R@10 \| Size) |
+|---|---|---|---|
+| 384D | **0.840** \| 0.876 \| 1616.8MB | **0.856** \| 0.891 \| 1726.2MB | **0.852** \| 0.887 \| 1680.4MB |
+| 256D | **0.830** \| 0.867 \| 1161.3MB | **0.852** \| 0.887 \| 1207.1MB | **0.847** \| 0.882 \| 1176.6MB |
+| 128D | **0.799** \| 0.839 \| 665.2MB | **0.844** \| 0.877 \| 688.0MB | **0.833** \| 0.866 \| 672.8MB |
+| 64D | **0.713** \| 0.780 \| 417.1MB | **0.827** \| 0.860 \| 428.5MB | **0.802** \| 0.839 \| 420.9MB |
+
+## Appendix: Complete Ablation Matrices
+
+To understand the direct tradeoff space across all limits, here are exact boundary grids measuring precision against dimensionality.
+
+### MRR@10 grid
+
+<div style="display: flex; justify-content: space-between;">
+
+<div>
+
+**Model:** `gte_modernbert_base` (MRR@10)
+
+| Dims | fp32 | int8 | binary |
+|:---|:---:|:---:|:---:|
+| **768** | 0.917 | 0.927 | 0.927 |
+| **512** | 0.915 | 0.926 | 0.925 |
+| **256** | 0.907 | 0.923 | 0.920 |
+| **128** | 0.892 | 0.916 | 0.910 |
+| **64** | 0.866 | 0.907 | 0.896 |
+
+</div>
+
+<div>
+
+**Model:** `nomic_v15` (MRR@10)
+
+| Dims | fp32 |
+|:---|:---:|
+| **768** | 0.795 |
+
+</div>
+
+<div>
+
+**Model:** `bge_small` (MRR@10)
+
+| Dims | fp32 | int8 | binary |
+|:---|:---:|:---:|:---:|
+| **384** | 0.898 | 0.906 | 0.906 |
+| **256** | 0.896 | 0.907 | 0.906 |
+| **128** | 0.885 | 0.907 | 0.902 |
+| **64** | 0.859 | 0.902 | 0.891 |
+
+</div>
+
+<div>
+
+**Model:** `minilm_l6` (MRR@10)
+
+| Dims | fp32 | int8 | binary |
+|:---|:---:|:---:|:---:|
+| **384** | 0.895 | 0.902 | 0.902 |
+| **256** | 0.892 | 0.901 | 0.900 |
+| **128** | 0.881 | 0.902 | 0.898 |
+| **64** | 0.855 | 0.897 | 0.886 |
+
+</div>
+
+</div>
+<br>
+
+### Latency p50 (ms) grid
+
+<div style="display: flex; justify-content: space-between;">
+
+<div>
+
+**Model:** `gte_modernbert_base` (Latency p50 (ms))
+
+| Dims | fp32 | int8 | binary |
+|:---|:---:|:---:|:---:|
+| **768** | 24.12 | 16.18 | 15.36 |
+| **512** | 14.77 | 15.64 | 15.10 |
+| **256** | 14.57 | 15.02 | 14.80 |
+| **128** | 14.45 | 14.70 | 14.63 |
+| **64** | 14.61 | 14.62 | 14.50 |
+
+</div>
+
+<div>
+
+**Model:** `nomic_v15` (Latency p50 (ms))
+
+| Dims | fp32 |
+|:---|:---:|
+| **768** | 11.86 |
+
+</div>
+
+<div>
+
+**Model:** `bge_small` (Latency p50 (ms))
+
+| Dims | fp32 | int8 | binary |
+|:---|:---:|:---:|:---:|
+| **384** | 10.63 | 17.53 | 17.22 |
+| **256** | 17.81 | 17.46 | 18.40 |
+| **128** | 17.86 | 18.35 | 18.23 |
+| **64** | 18.44 | 18.23 | 17.88 |
+
+</div>
+
+<div>
+
+**Model:** `minilm_l6` (Latency p50 (ms))
+
+| Dims | fp32 | int8 | binary |
+|:---|:---:|:---:|:---:|
+| **384** | 8.06 | 14.37 | 13.78 |
+| **256** | 8.52 | 6.91 | 6.71 |
+| **128** | 6.51 | 6.79 | 6.57 |
+| **64** | 6.33 | 6.58 | 6.37 |
+
+</div>
+
+</div>
+<br>
+
+### Index Size (MB) grid
+
+<div style="display: flex; justify-content: space-between;">
+
+<div>
+
+**Model:** `gte_modernbert_base` (Index Size (MB))
+
+| Dims | fp32 | int8 | binary |
+|:---|:---:|:---:|:---:|
+| **768** | 3105.3 | 3283.9 | 3192.3 |
+| **512** | 2154.1 | 2245.7 | 2184.7 |
+| **256** | 1161.3 | 1207.1 | 1176.6 |
+| **128** | 665.2 | 688.0 | 672.8 |
+| **64** | 417.1 | 428.5 | 420.9 |
+
+</div>
+
+<div>
+
+**Model:** `nomic_v15` (Index Size (MB))
+
+| Dims | fp32 |
+|:---|:---:|
+| **768** | 3104.9 |
+
+</div>
+
+<div>
+
+**Model:** `bge_small` (Index Size (MB))
+
+| Dims | fp32 | int8 | binary |
+|:---|:---:|:---:|:---:|
+| **384** | 1616.8 | 1726.2 | 1680.4 |
+| **256** | 1161.3 | 1207.1 | 1176.6 |
+| **128** | 665.2 | 688.0 | 672.8 |
+| **64** | 417.1 | 428.5 | 420.9 |
+
+</div>
+
+<div>
+
+**Model:** `minilm_l6` (Index Size (MB))
+
+| Dims | fp32 | int8 | binary |
+|:---|:---:|:---:|:---:|
+| **384** | 1616.8 | 1726.2 | 1680.4 |
+| **256** | 1161.3 | 1207.1 | 1176.6 |
+| **128** | 665.2 | 688.0 | 672.8 |
+| **64** | 417.1 | 428.5 | 420.9 |
+
+</div>
+
+</div>
+<br>

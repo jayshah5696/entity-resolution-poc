@@ -17,7 +17,7 @@ df['dims'] = df['dims'].fillna(0).astype(int)
 ft_df = df[df['mode'] == 'Fine-Tuned'].copy()
 ft_df = ft_df.groupby(['model', 'dims', 'quantization']).first().reset_index()
 
-models_to_matrix = ['bge_small', 'minilm_l6']
+models_to_matrix = ['gte_modernbert_base', 'nomic_v15', 'bge_small', 'minilm_l6']
 
 metrics = [
     ('overall_mrr_at_10', 'MRR@10'),
