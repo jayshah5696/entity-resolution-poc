@@ -8,15 +8,15 @@ tags: ["machine learning", "entity resolution", "search", "dense retrieval", "BM
 
 ## Introduction
 
-Entity resolution—the task of consistently identifying real-world people across massive databases—is a fundamental retrieval challenge. The standard approach relies heavily on lexical algorithms like BM25 via Elasticsearch engines. While Elasticsearch offers tools like fuzziness to combat typos, applying fuzzy matching across a 500 million row B2B contact database introduces punishing query latency and cascades false positives. Practically, engineers depend heavily on strict lexical evaluation on constrained schemas, where searching for an abbreviated "Jon" entirely misses the canonical "Jonathan", and searching using a personal Gmail drops the corporate record containing a strict work domain.
+If you've ever tried to scale exact-match search to 500 million rows, you know BM25 breaks down when users type abbreviations, typos, or miss fields entirely. The obvious fix is dense retrieval. But there is a catch: loading 500M standard 768-dimensional FP32 vectors demands over 1.5TB of RAM. That is a non-starter for most production architectures.
 
-A continuous dense representation naturally solves this by mapping records into a shared semantic space, overcoming rigid lexical barriers smoothly. But deploying a true dense retrieval fallback pipeline unearths a brutal operational penalty: serving an uncompressed 768-dimensional FP32 index against 500 million rows demands north of 1.5TB of continuous memory footprint.
+Entity resolution—the task of consistently identifying real-world people across massive databases—is a fundamental retrieval challenge. The standard approach relies heavily on lexical algorithms like BM25 via [Elasticsearch](https://www.elastic.co/). While Elasticsearch offers tools like fuzziness to combat typos, applying fuzzy matching across a 500 million row B2B contact database introduces high query latency and cascades false positives. Practically, engineers depend heavily on strict lexical evaluation on constrained schemas, where searching for an abbreviated "Jon" entirely misses the canonical "Jonathan", and searching using a personal Gmail drops the corporate record containing a strict work domain.
 
-In this article, we explore bridging the gap between retrieval robustness and operational footprint. We systematically evaluate whether compact dense embedding models (under 150M parameters) fine-tuned via Matryoshka Representation Learning (MRL) can dramatically outperform pure BM25 baselines on targeted corruptions (abbreviations, field drops, and domain swaps), while surviving aggressive, scale-friendly quantizations.
+A continuous dense representation naturally solves this by mapping records into a shared semantic space, overcoming rigid lexical barriers smoothly. But deploying a true dense retrieval fallback pipeline imposes a strict memory requirement.
 
-To accomplish this, we structured an end-to-end evaluation using efficient serverless infrastructure—fine-tuning five parallel model architectures for under $15 total compute on Modal. We built a 1.2 million record synthetic dataset spanning names, organizations, and global domains, constructed 600K training triplets simulating production decay scenarios, and executed a comprehensive ablation study across LanceDB evaluating models, dimensions, and quantization formats.
+In this article, we evaluate whether compact dense embedding models (under 150M parameters) fine-tuned via [Matryoshka Representation Learning](https://arxiv.org/abs/2205.13147) (MRL) can dynamically outperform pure BM25 baselines on targeted corruptions (abbreviations, field drops, and domain swaps), while surviving aggressive, scale-friendly quantizations.
 
-Let us explore the evaluation methodology, model behaviors under severe data corruption, and exactly how small a high-fidelity vector index can get.
+To accomplish this, we structured an end-to-end evaluation using efficient serverless infrastructure—fine-tuning five parallel model architectures for under $15 total compute on [Modal](https://modal.com/). We built a 1.2 million record synthetic dataset spanning names, organizations, and global domains, constructed 600K training triplets simulating production decay scenarios, and executed a comprehensive ablation study across [LanceDB](https://lancedb.com/) evaluating models, dimensions, and quantization formats.
 
 ## The Approach: Synthetic Data and Matryoshka Learning
 
@@ -52,16 +52,19 @@ During training and evaluation, we generated severe data variations based on six
 | Adriana \|  \| Brown-Fry \| agutierrez@brown-fry.com \| UK | Adriana \| Gutierrez \| Brown-Fry \| agutierrez@brown-fry.com \| UK | | Missing Attributes |
 
 We tested the lexical **BM25** baseline against four dense retriever variants spanning differing capacities:
-- **all-MiniLM-L6-v2 (22M)**: The absolute parameter floor.
-- **bge-small-en-v1.5 (33M)**: The efficiency baseline.
-- **nomic-embed-text-v1.5 (137M)**: A modern model natively trained with prefix instructions.
-- **gte-modernbert-base (149M)**: A Flash-Attention enabled backbone with native scaling.
+- [**all-MiniLM-L6-v2**](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) **(22M)**: The absolute parameter floor.
+- [**bge-small-en-v1.5**](https://huggingface.co/BAAI/bge-small-en-v1.5) **(33M)**: The efficiency baseline.
+- [**nomic-embed-text-v1.5**](https://huggingface.co/nomic-ai/nomic-embed-text-v1.5) **(137M)**: A modern model natively trained with prefix instructions.
+- [**gte-modernbert-base**](https://huggingface.co/Alibaba-NLP/gte-modernbert-base) **(149M)**: A Flash-Attention enabled backbone with native scaling.
 
 We fine-tuned the dense models using a generated triplets dataset comprising an anchor, a positive canonical match, and hard negative samples drawn dynamically via structural curriculum learning. 
 
 To solve the 1.5TB memory problem organically, we optimized the output embeddings wrapped inside **MatryoshkaLoss** to calculate gradients concurrently across dimensional segments of `[768, 512, 256, 128, 64]`. 
 
-We ran parallel fine-tuning pipelines using Modal on A10G GPUs. Spinning up robust distributed remote infrastructure is a must when running sweeping ablations like this. Fine-tuning all five pipelines concurrently took exactly 60 minutes and cost **less than $15 in total compute.**
+We ran parallel fine-tuning pipelines using [Modal](https://modal.com/) on A10G GPUs. Spinning up robust distributed remote infrastructure is a must when running sweeping ablations like this. Fine-tuning all five pipelines concurrently took exactly 60 minutes and cost **less than $15 in total compute.**
+
+![Modal Billing Dashboard](assets/modal-billing.png)
+*Figure: The Modal billing dashboard demonstrating the $14.50 cost for training all constraints simultaneously.*
 
 ## Evaluating Accuracy Across Degradations
 
@@ -130,7 +133,7 @@ Despite extreme volume compression, it holds a resilient 0.934 Recall@10 globall
 ![Overall Recall](results/plots/overall_recall.png)
 *Figure 5: Overall Recall@10 by Model and Mode. Fine-tuning pushes the tiny 22M parameter MiniLM-L6 (0.928) perilously close to the zero-shot baseline of the 149M ModernBERT (0.941).*
 
-## Conclusion
+## Code & Operational Architecture
 
 Entity resolution on real-world data requires models that are robust to missing or inherently noisy attribute fields. While dense retrieval models elegantly solve the lexical mismatch problem, their infrastructure footprint is often prohibitive at production scales.
 
@@ -138,7 +141,7 @@ By structuring a curriculum of realistic corruptions and applying Matryoshka lea
 
 Next time you hit a problem where text matches fail but semantic size is too heavy, consider fine-tuning a small model and deriving quantized outputs from a Matryoshka manifold. 
 
-For the full detailed ablation pipeline, including the direct LanceDB configurations—check out the source tree on our GitHub.
+For the full detailed ablation pipeline, including the direct LanceDB configurations—check out the [`entity-resolution-poc`](https://github.com/jayshah5696/entity-resolution-poc) source tree on our GitHub.
 ## Appendix: Complete Ablation Matrices
 
 To understand the direct tradeoff space across all limits, here are exact boundary grids measuring precision against dimensionality.
