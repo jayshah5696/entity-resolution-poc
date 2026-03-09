@@ -94,17 +94,16 @@ Nomic-v1.5 natively relies on rigid instruction prefixes (like `search_query: `)
 
 Here are the uncompressed Maximum-Dimensional configurations (e.g. 768D FP32) tracking zero-shot performance directly against fine-tuned model adaptations. 
 
-| model               | mode       |   dims |   index_size_mb |   latency_p50 |   overall_mrr_at_10 |
-|:--------------------|:-----------|:------:|:---------------:|:-------------:|:-------------------:|
-| bm25_baseline       | Zero-Shot  |      0 |         143.650 |         3.253 |               0.917 |
-| bge_small           | Zero-Shot  |    384 |        1616.750 |        11.692 |               0.844 |
-| bge_small           | Fine-Tuned |    384 |        1616.750 |        10.628 |               0.898 |
-| minilm_l6           | Zero-Shot  |    384 |        1616.750 |         8.472 |               0.840 |
-| minilm_l6           | Fine-Tuned |    384 |        1616.750 |         8.061 |               0.895 |
-| gte_modernbert_base | Zero-Shot  |    768 |        3105.300 |        18.738 |               0.891 |
-| gte_modernbert_base | Fine-Tuned |    768 |        3105.300 |        24.118 |               0.917 |
-| nomic_v15           | Zero-Shot  |    768 |        3105.300 |        11.642 |               0.850 |
-| nomic_v15           | Fine-Tuned |    768 |        3104.920 |        11.864 |               0.795 |
+| Model | Mode | Dims | FP32 (MRR \| Size) | INT8 (MRR \| Size) | Binary (MRR \| Size) |
+|-------|------|------|--------------------|--------------------|----------------------|
+| `bge_small` | Zero-Shot | 384 | 0.844 \| 1616.8MB | 0.875 \| 1726.2MB | 0.868 \| 1680.4MB |
+| `minilm_l6` | Zero-Shot | 384 | 0.840 \| 1616.8MB | 0.856 \| 1726.2MB | 0.852 \| 1680.4MB |
+| `gte_modernbert` | Zero-Shot | 768 | 0.891 \| 3105.3MB | - | - |
+| `nomic_v15` | Zero-Shot | 768 | 0.850 \| 3105.3MB | - | - |
+| `bge_small` | Fine-Tuned | 384 | 0.898 \| 1616.8MB | 0.906 \| 1726.2MB | 0.906 \| 1680.4MB |
+| `minilm_l6` | Fine-Tuned | 384 | 0.895 \| 1616.8MB | 0.902 \| 1726.2MB | 0.902 \| 1680.4MB |
+| `gte_modernbert` | Fine-Tuned | 768 | 0.917 \| 3105.3MB | - | - |
+| `nomic_v15` | Fine-Tuned | 768 | 0.795 \| 3104.9MB | - | - |
 
 The smaller models benefit massively from the domain adaptation. `bge_small` jumps from 0.844 to 0.898 MRR, and `minilm_l6` climbs from 0.840 to 0.895. 
 
@@ -148,103 +147,25 @@ These resulting fine-tuned checkpoints are public on HuggingFace:
 - [`jayshah5696/er-minilm-l6-pipe-ft`](https://huggingface.co/jayshah5696/er-minilm-l6-pipe-ft)
 
 For the full detailed ablation pipeline, including the direct LanceDB configurations—check out the [`entity-resolution-poc`](https://github.com/jayshah5696/entity-resolution-poc) source tree on our GitHub.
-## Appendix: Complete Ablation Matrices
+## Appendix: Comprehensive Ablation Grids
 
-To understand the direct tradeoff space across all limits, here are exact boundary grids measuring precision against dimensionality.
+The following tables present the full ablation results for Matryoshka dimensions against quantization levels, grouping the key metrics side-by-side to allow for direct evaluation of compression tradeoffs.
 
-### MRR@10 grid
+### Model: `bge_small` (Fine-Tuned)
+| Dimensions | FP32 (MRR \| R@10 \| Size) | INT8 (MRR \| R@10 \| Size) | Binary (MRR \| R@10 \| Size) |
+|---|---|---|---|
+| 384D | 0.898 \| 0.932 \| 1616.8MB | 0.906 \| 0.941 \| 1726.2MB | 0.906 \| 0.940 \| 1680.4MB |
+| 256D | 0.896 \| 0.930 \| 1161.3MB | **0.907** 🏆 \| **0.942** \| 1207.1MB | 0.906 \| 0.942 \| 1176.6MB |
+| 128D | 0.885 \| 0.921 \| 665.2MB | - | - |
 
-<div style="display: flex; justify-content: space-between;">
+### Model: `minilm_l6` (Fine-Tuned)
+| Dimensions | FP32 (MRR \| R@10 \| Size) | INT8 (MRR \| R@10 \| Size) | Binary (MRR \| R@10 \| Size) |
+|---|---|---|---|
+| 384D | 0.895 \| 0.928 \| 1616.8MB | 0.902 \| 0.935 \| 1726.2MB | 0.902 \| 0.934 \| 1680.4MB |
+| 256D | 0.892 \| 0.925 \| 1161.3MB | 0.901 \| 0.933 \| 1207.1MB | 0.900 \| 0.933 \| 1176.6MB |
+| 128D | 0.881 \| 0.916 \| 665.2MB | **0.902** 🏆 \| **0.934** \| 688.0MB | 0.898 \| 0.931 \| 672.8MB |
+| 64D | 0.855 \| 0.890 \| *417.1MB* ⚡ | 0.897 \| 0.929 \| *428.5MB* ⚡ | 0.886 \| 0.920 \| *420.9MB* ⚡ |
 
-<div>
+*(Note: BM25 Baseline achieved **0.917** MRR@10 with a **143.7MB** index).*
 
-**Model:** `bge_small` (MRR@10)
-
-| Dims | fp32 | int8 | binary |
-|:---|:---:|:---:|:---:|
-| **384** | 0.898 | 0.906 | 0.906 |
-| **256** | 0.896 | 0.907 | 0.906 |
-| **128** | 0.885 | - | - |
-
-</div>
-
-<div>
-
-**Model:** `minilm_l6` (MRR@10)
-
-| Dims | fp32 | int8 | binary |
-|:---|:---:|:---:|:---:|
-| **384** | 0.895 | 0.902 | 0.902 |
-| **256** | 0.892 | 0.901 | 0.900 |
-| **128** | 0.881 | 0.902 | 0.898 |
-| **64** | 0.855 | 0.897 | 0.886 |
-
-</div>
-
-</div>
-<br>
-
-### Latency p50 (ms) grid
-
-<div style="display: flex; justify-content: space-between;">
-
-<div>
-
-**Model:** `bge_small` (Latency p50 (ms))
-
-| Dims | fp32 | int8 | binary |
-|:---|:---:|:---:|:---:|
-| **384** | 10.63 | 17.53 | 17.22 |
-| **256** | 17.81 | 17.46 | 18.40 |
-| **128** | 17.86 | - | - |
-
-</div>
-
-<div>
-
-**Model:** `minilm_l6` (Latency p50 (ms))
-
-| Dims | fp32 | int8 | binary |
-|:---|:---:|:---:|:---:|
-| **384** | 8.06 | 14.37 | 13.78 |
-| **256** | 8.52 | 6.91 | 6.71 |
-| **128** | 6.51 | 6.79 | 6.57 |
-| **64** | 6.33 | 6.58 | 6.37 |
-
-</div>
-
-</div>
-<br>
-
-### Index Size (MB) grid
-
-<div style="display: flex; justify-content: space-between;">
-
-<div>
-
-**Model:** `bge_small` (Index Size (MB))
-
-| Dims | fp32 | int8 | binary |
-|:---|:---:|:---:|:---:|
-| **384** | 1616.8 | 1726.2 | 1680.4 |
-| **256** | 1161.3 | 1207.1 | 1176.6 |
-| **128** | 665.2 | - | - |
-
-</div>
-
-<div>
-
-**Model:** `minilm_l6` (Index Size (MB))
-
-| Dims | fp32 | int8 | binary |
-|:---|:---:|:---:|:---:|
-| **384** | 1616.8 | 1726.2 | 1680.4 |
-| **256** | 1161.3 | 1207.1 | 1176.6 |
-| **128** | 665.2 | 688.0 | 672.8 |
-| **64** | 417.1 | 428.5 | 420.9 |
-
-</div>
-
-</div>
-<br>
 
