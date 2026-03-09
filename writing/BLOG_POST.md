@@ -70,7 +70,7 @@ We ran parallel fine-tuning pipelines using [Modal](https://modal.com/) on A10G 
 
 We measured both Recall@10 (the proportion of queries where the canonical record appears in the top 10 results) and Mean Reciprocal Rank (MRR@10). While BM25 provides an incredibly strong baseline on exact lexical overlaps, the core of our evaluation focuses on the behavior of these models when the signal text is heavily degraded.
 
-![Bucket Heatmap](../results/plots/bucket_heatmap.png)
+![Bucket Heatmap](../results/plots/bucket_heatmap_all.png)
 *Figure 1: Model performance (Overall MRR@10) across the six corruption buckets.*
 
 ### 1. GTE-ModernBERT Dominates Heavily Corrupted Queries
@@ -98,11 +98,11 @@ Here are the uncompressed Maximum-Dimensional configurations (e.g. 768D FP32) tr
 |-------|------|------|--------------------|--------------------|----------------------|
 | `bge_small` | Zero-Shot | 384 | 0.844 \| 1616.8MB | 0.875 \| 1726.2MB | 0.868 \| 1680.4MB |
 | `minilm_l6` | Zero-Shot | 384 | 0.840 \| 1616.8MB | 0.856 \| 1726.2MB | 0.852 \| 1680.4MB |
-| `gte_modernbert` | Zero-Shot | 768 | 0.891 \| 3105.3MB | - | - |
-| `nomic_v15` | Zero-Shot | 768 | 0.850 \| 3105.3MB | - | - |
+| `gte_modernbert` | Zero-Shot | 768 | 0.891 \| 3105.3MB | 0.904 \| 3283.9MB | 0.903 \| 3192.3MB |
+| `nomic_v15` | Zero-Shot | 768 | 0.850 \| 3105.3MB | 0.861 \| 3283.9MB | 0.862 \| 3192.3MB |
 | `bge_small` | Fine-Tuned | 384 | 0.898 \| 1616.8MB | 0.906 \| 1726.2MB | 0.906 \| 1680.4MB |
 | `minilm_l6` | Fine-Tuned | 384 | 0.895 \| 1616.8MB | 0.902 \| 1726.2MB | 0.902 \| 1680.4MB |
-| `gte_modernbert` | Fine-Tuned | 768 | 0.917 \| 3105.3MB | - | - |
+| `gte_modernbert` | Fine-Tuned | 768 | 0.917 \| 3105.3MB | 0.927 \| 3283.9MB | 0.927 \| 3192.3MB |
 | `nomic_v15` | Fine-Tuned | 768 | 0.795 \| 3104.9MB | - | - |
 
 The smaller models benefit massively from the domain adaptation. `bge_small` jumps from 0.844 to 0.898 MRR, and `minilm_l6` climbs from 0.840 to 0.895. 
@@ -113,7 +113,7 @@ Dense vectors carry strict search overhead. BM25 yields p50 latencies around 3.2
 
 To compress index footprint, we scaled the representations down directly at index time using our Matryoshka training. By querying LanceDB mathematically truncated and quantized, we avoided re-running the heavy neural encoding for the ablation.
 
-![Ablation Data](../results/plots/bge_ablation.png)
+![Ablation Data](../results/plots/all_models_ablation.png)
 *Figure 3: Ablation tracking dimensionality versus MRR@10 using BGE-Small.*
 
 Using BGE-Small and MiniLM, we saw binary embeddings collapse below 128 dimensions. But INT8 models held steady, matching the performance of their wider counterparts.
@@ -122,7 +122,7 @@ Using BGE-Small and MiniLM, we saw binary embeddings collapse below 128 dimensio
 
 At inference time, accuracy is only one axis of the problem. Latency and memory load govern operational limits.
 
-![Latency vs MRR Pareto](../results/plots/latency_pareto.png)
+![Latency vs MRR Pareto](../results/plots/latency_pareto_all.png)
 *Figure 4: The latency-MRR Pareto frontier for fine-tuned dense retrievers vs. BM25.*
 
 We observed that **fine-tuned MiniLM-L6 mapped to a 128-INT8 configuration** returned results in 6.79ms (p50) and compressed the index to under 700MB. 
@@ -151,20 +151,69 @@ For the full detailed ablation pipeline, including the direct LanceDB configurat
 
 The following tables present the full ablation results for Matryoshka dimensions against quantization levels, grouping the key metrics side-by-side to allow for direct evaluation of compression tradeoffs.
 
+### Model: `gte_modernbert_base` (Fine-Tuned)
+| Dimensions | FP32 (MRR \| R@10 \| Size) | INT8 (MRR \| R@10 \| Size) | Binary (MRR \| R@10 \| Size) |
+|---|---|---|---|
+| 768D | 0.917 \| 0.966 \| 3105.3MB | **0.927** 🏆 \| 0.975 \| 3283.9MB | 0.927 \| 0.974 \| 3192.3MB |
+| 512D | 0.915 \| 0.964 \| 2154.1MB | 0.926 \| 0.973 \| 2245.7MB | 0.925 \| 0.973 \| 2184.7MB |
+| 256D | 0.907 \| 0.953 \| 1161.3MB | 0.923 \| 0.970 \| 1207.1MB | 0.920 \| 0.967 \| 1176.6MB |
+| 128D | 0.892 \| 0.935 \| 665.2MB | 0.916 \| 0.962 \| 688.0MB | 0.910 \| 0.956 \| 672.8MB |
+| 64D | 0.866 \| 0.905 \| *417.1MB* ⚡ | 0.907 \| 0.951 \| *428.5MB* ⚡ | 0.896 \| 0.938 \| *420.9MB* ⚡ |
+
+### Model: `gte_modernbert_base` (Zero-Shot)
+| Dimensions | FP32 (MRR \| R@10 \| Size) | INT8 (MRR \| R@10 \| Size) | Binary (MRR \| R@10 \| Size) |
+|---|---|---|---|
+| 768D | 0.891 \| 0.941 \| 3105.3MB | **0.904** 🏆 \| 0.948 \| 3283.9MB | 0.903 \| 0.948 \| 3192.3MB |
+| 512D | 0.883 \| 0.935 \| 2154.1MB | 0.903 \| 0.947 \| 2245.7MB | 0.900 \| 0.946 \| 2184.7MB |
+| 256D | 0.859 \| 0.911 \| 1161.3MB | 0.891 \| 0.935 \| 1207.1MB | 0.885 \| 0.931 \| 1176.6MB |
+| 128D | 0.816 \| 0.871 \| 665.2MB | 0.877 \| 0.918 \| 688.0MB | 0.862 \| 0.907 \| 672.8MB |
+| 64D | 0.705 \| 0.786 \| *417.1MB* ⚡ | 0.841 \| 0.881 \| *428.5MB* ⚡ | 0.809 \| 0.855 \| *420.9MB* ⚡ |
+
+### Model: `nomic_v15` (Fine-Tuned)
+| Dimensions | FP32 (MRR \| R@10 \| Size) | INT8 (MRR \| R@10 \| Size) | Binary (MRR \| R@10 \| Size) |
+|---|---|---|---|
+| 768D | **0.795** 🏆 \| 0.817 \| 3104.9MB | - | - |
+
+### Model: `nomic_v15` (Zero-Shot)
+| Dimensions | FP32 (MRR \| R@10 \| Size) | INT8 (MRR \| R@10 \| Size) | Binary (MRR \| R@10 \| Size) |
+|---|---|---|---|
+| 768D | 0.850 \| 0.882 \| 3105.3MB | 0.861 \| 0.891 \| 3283.9MB | **0.862** 🏆 \| 0.893 \| 3192.3MB |
+| 512D | 0.844 \| 0.877 \| 2154.1MB | 0.856 \| 0.886 \| 2245.7MB | 0.855 \| 0.887 \| 2184.7MB |
+| 256D | 0.831 \| 0.864 \| 1161.3MB | 0.858 \| 0.889 \| 1207.1MB | 0.853 \| 0.884 \| 1176.6MB |
+| 128D | 0.797 \| 0.839 \| 665.2MB | 0.852 \| 0.884 \| 688.0MB | 0.840 \| 0.872 \| 672.8MB |
+| 64D | 0.655 \| 0.757 \| *417.1MB* ⚡ | 0.833 \| 0.865 \| *428.5MB* ⚡ | 0.797 \| 0.838 \| *420.9MB* ⚡ |
+
 ### Model: `bge_small` (Fine-Tuned)
 | Dimensions | FP32 (MRR \| R@10 \| Size) | INT8 (MRR \| R@10 \| Size) | Binary (MRR \| R@10 \| Size) |
 |---|---|---|---|
 | 384D | 0.898 \| 0.932 \| 1616.8MB | 0.906 \| 0.941 \| 1726.2MB | 0.906 \| 0.940 \| 1680.4MB |
-| 256D | 0.896 \| 0.930 \| 1161.3MB | **0.907** 🏆 \| **0.942** \| 1207.1MB | 0.906 \| 0.942 \| 1176.6MB |
-| 128D | 0.885 \| 0.921 \| 665.2MB | - | - |
+| 256D | 0.896 \| 0.930 \| 1161.3MB | **0.907** 🏆 \| 0.942 \| 1207.1MB | 0.906 \| 0.942 \| 1176.6MB |
+| 128D | 0.885 \| 0.921 \| 665.2MB | 0.907 \| 0.943 \| 688.0MB | 0.902 \| 0.938 \| 672.8MB |
+| 64D | 0.859 \| 0.894 \| *417.1MB* ⚡ | 0.902 \| 0.938 \| *428.5MB* ⚡ | 0.891 \| 0.926 \| *420.9MB* ⚡ |
+
+### Model: `bge_small` (Zero-Shot)
+| Dimensions | FP32 (MRR \| R@10 \| Size) | INT8 (MRR \| R@10 \| Size) | Binary (MRR \| R@10 \| Size) |
+|---|---|---|---|
+| 384D | 0.844 \| 0.894 \| 1616.8MB | **0.875** 🏆 \| 0.917 \| 1726.2MB | 0.868 \| 0.912 \| 1680.4MB |
+| 256D | 0.831 \| 0.882 \| 1161.3MB | 0.872 \| 0.915 \| 1207.1MB | 0.861 \| 0.907 \| 1176.6MB |
+| 128D | 0.798 \| 0.848 \| 665.2MB | 0.860 \| 0.902 \| 688.0MB | 0.844 \| 0.889 \| 672.8MB |
+| 64D | 0.710 \| 0.771 \| *417.1MB* ⚡ | 0.828 \| 0.870 \| *428.5MB* ⚡ | 0.797 \| 0.841 \| *420.9MB* ⚡ |
 
 ### Model: `minilm_l6` (Fine-Tuned)
 | Dimensions | FP32 (MRR \| R@10 \| Size) | INT8 (MRR \| R@10 \| Size) | Binary (MRR \| R@10 \| Size) |
 |---|---|---|---|
 | 384D | 0.895 \| 0.928 \| 1616.8MB | 0.902 \| 0.935 \| 1726.2MB | 0.902 \| 0.934 \| 1680.4MB |
 | 256D | 0.892 \| 0.925 \| 1161.3MB | 0.901 \| 0.933 \| 1207.1MB | 0.900 \| 0.933 \| 1176.6MB |
-| 128D | 0.881 \| 0.916 \| 665.2MB | **0.902** 🏆 \| **0.934** \| 688.0MB | 0.898 \| 0.931 \| 672.8MB |
+| 128D | 0.881 \| 0.916 \| 665.2MB | **0.902** 🏆 \| 0.934 \| 688.0MB | 0.898 \| 0.931 \| 672.8MB |
 | 64D | 0.855 \| 0.890 \| *417.1MB* ⚡ | 0.897 \| 0.929 \| *428.5MB* ⚡ | 0.886 \| 0.920 \| *420.9MB* ⚡ |
+
+### Model: `minilm_l6` (Zero-Shot)
+| Dimensions | FP32 (MRR \| R@10 \| Size) | INT8 (MRR \| R@10 \| Size) | Binary (MRR \| R@10 \| Size) |
+|---|---|---|---|
+| 384D | 0.840 \| 0.876 \| 1616.8MB | **0.856** 🏆 \| 0.891 \| 1726.2MB | 0.852 \| 0.887 \| 1680.4MB |
+| 256D | 0.830 \| 0.867 \| 1161.3MB | 0.852 \| 0.887 \| 1207.1MB | 0.847 \| 0.882 \| 1176.6MB |
+| 128D | 0.799 \| 0.839 \| 665.2MB | 0.844 \| 0.877 \| 688.0MB | 0.833 \| 0.866 \| 672.8MB |
+| 64D | 0.713 \| 0.780 \| *417.1MB* ⚡ | 0.827 \| 0.860 \| *428.5MB* ⚡ | 0.802 \| 0.839 \| *420.9MB* ⚡ |
 
 *(Note: BM25 Baseline achieved **0.917** MRR@10 with a **143.7MB** index).*
 

@@ -22,7 +22,7 @@ pivot_mrr = df_emb.pivot_table(index=['model', 'mode', 'dims'], columns='quantiz
 pivot_r10 = df_emb.pivot_table(index=['model', 'mode', 'dims'], columns='quantization', values='overall_recall_at_10', aggfunc='first').reset_index()
 pivot_size = df_emb.pivot_table(index=['model', 'mode', 'dims'], columns='quantization', values='index_size_mb', aggfunc='first').reset_index()
 
-# Sort descending by dims
+# Sort
 pivot_mrr = pivot_mrr.sort_values(by=['model', 'mode', 'dims'], ascending=[True, False, False])
 
 def fmt_val(val):
@@ -38,25 +38,43 @@ out.append("## Appendix: Comprehensive Ablation Grids")
 out.append("The following tables present the full ablation results for Matryoshka dimensions against quantization levels, grouping the key metrics side-by-side to allow for direct evaluation of compression tradeoffs.")
 out.append("")
 
-models = ['bge_small', 'minilm_l6']
+models = ['gte_modernbert_base', 'nomic_v15', 'bge_small', 'minilm_l6']
 for model in models:
-    out.append(f"### Model: `{model}` (Fine-Tuned)")
-    out.append("| Dimensions | FP32 (MRR | R@10 | Size) | INT8 (MRR | R@10 | Size) | Binary (MRR | R@10 | Size) |")
-    out.append("|---|---|---|---|")
-    
-    sub = pivot_mrr[(pivot_mrr['model'] == model) & (pivot_mrr['mode'] == 'Fine-Tuned')]
-    for _, row in sub.iterrows():
-        d = row['dims']
+    for mode in ['Fine-Tuned', 'Zero-Shot']:
+        sub = pivot_mrr[(pivot_mrr['model'] == model) & (pivot_mrr['mode'] == mode)]
+        if sub.empty:
+            continue
+            
+        out.append(f"### Model: `{model}` ({mode})")
+        out.append("| Dimensions | FP32 (MRR | R@10 | Size) | INT8 (MRR | R@10 | Size) | Binary (MRR | R@10 | Size) |")
+        out.append("|---|---|---|---|")
         
-        r10_row = pivot_r10[(pivot_r10['model']==model) & (pivot_r10['mode']=='Fine-Tuned') & (pivot_r10['dims']==d)].iloc[0]
-        sz_row = pivot_size[(pivot_size['model']==model) & (pivot_size['mode']=='Fine-Tuned') & (pivot_size['dims']==d)].iloc[0]
-        
-        fp32_str = f"**{fmt_val(row.get('fp32'))}** \\| {fmt_val(r10_row.get('fp32'))} \\| {fmt_size(sz_row.get('fp32'))}" if not pd.isna(row.get('fp32')) else "-"
-        int8_str = f"**{fmt_val(row.get('int8'))}** \\| {fmt_val(r10_row.get('int8'))} \\| {fmt_size(sz_row.get('int8'))}" if not pd.isna(row.get('int8')) else "-"
-        bin_str = f"**{fmt_val(row.get('binary'))}** \\| {fmt_val(r10_row.get('binary'))} \\| {fmt_size(sz_row.get('binary'))}" if not pd.isna(row.get('binary')) else "-"
-        
-        out.append(f"| {d}D | {fp32_str} | {int8_str} | {bin_str} |")
-    
-    out.append("\n")
+        for _, row in sub.iterrows():
+            d = row['dims']
+            
+            # Use filters to get corresponding R@10 and Size safely
+            r10_sub = pivot_r10[(pivot_r10['model']==model) & (pivot_r10['mode']==mode) & (pivot_r10['dims']==d)]
+            sz_sub = pivot_size[(pivot_size['model']==model) & (pivot_size['mode']==mode) & (pivot_size['dims']==d)]
+            
+            if r10_sub.empty or sz_sub.empty:
+                continue
+                
+            r10_row = r10_sub.iloc[0]
+            sz_row = sz_sub.iloc[0]
+            
+            quants = ['fp32', 'int8', 'binary']
+            cells = []
+            for q in quants:
+                mrr = row.get(q)
+                r10 = r10_row.get(q)
+                sz = sz_row.get(q)
+                
+                if not pd.isna(mrr):
+                    cells.append(f"**{fmt_val(mrr)}** \\| {fmt_val(r10)} \\| {fmt_size(sz)}")
+                else:
+                    cells.append("-")
+            
+            out.append(f"| {d}D | {' | '.join(cells)} |")
+        out.append("\n")
 
 print('\n'.join(out))

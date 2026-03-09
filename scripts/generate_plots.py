@@ -39,7 +39,8 @@ base_dims = df[((df['model'] == 'gte_modernbert_base') & (df['dims'] == 768)) |
                ((df['model'] == 'nomic_v15') & (df['dims'] == 768))]
 sns.barplot(data=base_dims, x='model', y='overall_mrr_at_10', hue='mode', palette='muted')
 
-bm25_mrr = df[df['model']=='bm25_baseline']['overall_mrr_at_10'].iloc[0]
+bm25_row = df[df['model']=='bm25_baseline'].iloc[0]
+bm25_mrr = bm25_row['overall_mrr_at_10']
 plt.axhline(y=bm25_mrr, color='r', linestyle='--', linewidth=2, label=f'BM25 Baseline ({bm25_mrr:.3f})')
 
 plt.title('Overall MRR@10: Zero-Shot vs Fine-Tuned (Uncompressed Index)', fontsize=14, fontweight='bold')
@@ -51,66 +52,72 @@ plt.tight_layout()
 plt.savefig('results/plots/mrr_overall.png', dpi=300)
 plt.close()
 
-# 2. BGE Small - Dimensionality & Quantization Grid (MRR@10)
-plt.figure(figsize=(9, 6))
-bge_ft = df[(df['model'] == 'bge_small') & (df['mode'] == 'Fine-Tuned')].sort_values('dims')
-sns.lineplot(data=bge_ft, x='dims', y='overall_mrr_at_10', hue='quantization', style='quantization',
-             markers=True, dashes=False, linewidth=2.5, markersize=10, palette='deep')
+# 2. Compression Ablation - All 4 models
+models = ['gte_modernbert_base', 'nomic_v15', 'bge_small', 'minilm_l6']
+fig, axes = plt.subplots(2, 2, figsize=(15, 10), sharey=True)
+axes = axes.flatten()
 
-plt.axhline(y=bm25_mrr, color='r', linestyle='--', alpha=0.6, label='BM25 Baseline')
-plt.title('Compression Ablation: BGE-Small Fine-Tuned (MRR@10)', fontsize=14, fontweight='bold')
-plt.xlabel('Matryoshka Dimensions', fontsize=12)
-plt.ylabel('Overall MRR@10', fontsize=12)
-plt.xticks([64, 128, 256, 384])
-plt.legend(title='Quantization', loc='lower right')
-plt.tight_layout()
-plt.savefig('results/plots/bge_ablation.png', dpi=300)
+for i, model in enumerate(models):
+    ax = axes[i]
+    model_ft = df[(df['model'] == model) & (df['mode'] == 'Fine-Tuned')].sort_values('dims')
+    if model_ft.empty:
+        model_ft = df[(df['model'] == model)].sort_values('dims')
+        title_suffix = "(All data)"
+    else:
+        title_suffix = "(Fine-Tuned)"
+        
+    sns.lineplot(data=model_ft, x='dims', y='overall_mrr_at_10', hue='quantization', style='quantization',
+                 markers=True, dashes=False, linewidth=2, ax=ax, palette='deep')
+    
+    ax.axhline(y=bm25_mrr, color='r', linestyle='--', alpha=0.4)
+    ax.set_title(f'{model} {title_suffix}', fontsize=12, fontweight='bold')
+    ax.set_xlabel('Dimensions')
+    ax.set_ylabel('Overall MRR@10')
+
+plt.suptitle('Compression Ablation across All Models (MRR@10)', fontsize=16, fontweight='bold')
+plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+plt.savefig('results/plots/all_models_ablation.png', dpi=300)
 plt.close()
 
-# 3. Latency vs MRR@10 Pareto Frontier for fine-tuned compressed indexes
-plt.figure(figsize=(10, 6))
-ft_variants = df[(df['mode'] == 'Fine-Tuned') & (df['model'].isin(['bge_small', 'minilm_l6']))]
+# 3. Latency vs MRR@10 Pareto Frontier - All models
+plt.figure(figsize=(12, 7))
+all_variants = df[df['model'].isin(models) & (df['model'] != 'bm25_baseline')]
 
-sns.scatterplot(data=ft_variants, x='latency_p50', y='overall_mrr_at_10', 
-                hue='model', style='quantization', s=150, palette='colorblind')
+sns.scatterplot(data=all_variants, x='latency_p50', y='overall_mrr_at_10', 
+                hue='model', style='mode', size='dims', sizes=(20, 200), alpha=0.7, palette='viridis')
 
-# Annotate points with dimensions
-for i in range(ft_variants.shape[0]):
-    row = ft_variants.iloc[i]
-    plt.text(row['latency_p50']+0.2, row['overall_mrr_at_10'] - 0.002, f"{int(row['dims'])}D", fontsize=9)
-
-bm25_lat = df[df['model']=='bm25_baseline']['latency_p50'].iloc[0]
+bm25_lat = bm25_row['latency_p50']
 plt.axhline(y=bm25_mrr, color='red', linestyle='--', alpha=0.5, label='BM25 MRR')
 plt.axvline(x=bm25_lat, color='red', linestyle=':', alpha=0.5, label='BM25 Latency')
 
-plt.title('Pareto Frontier: Latency vs MRR@10 (Fine-Tuned Models)', fontsize=14, fontweight='bold')
+plt.title('Pareto Frontier: Latency vs MRR@10 (All Models & Configurations)', fontsize=14, fontweight='bold')
 plt.xlabel('Latency p50 (ms)', fontsize=12)
 plt.ylabel('Overall MRR@10', fontsize=12)
 plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
 plt.tight_layout()
-plt.savefig('results/plots/latency_pareto.png', dpi=300)
+plt.savefig('results/plots/latency_pareto_all.png', dpi=300)
 plt.close()
 
-# 4. Bucket Heatmap
-bm25 = df[df['model'] == 'bm25_baseline'].iloc[0]
-gte_zs = df[(df['model'] == 'gte_modernbert_base') & (df['mode'] == 'Zero-Shot')].iloc[0]
-gte_ft = df[(df['model'] == 'gte_modernbert_base') & (df['mode'] == 'Fine-Tuned')].iloc[0]
-bge_ft_base = df[(df['model'] == 'bge_small') & (df['mode'] == 'Fine-Tuned') & (df['dims'] == 384) & (df['quantization'] == 'fp32')].iloc[0]
-
+# 4. Bucket Heatmap - Best variants of each model
 buckets = ['pristine', 'missing_firstname', 'missing_email_company', 'typo_name', 'domain_mismatch', 'swapped_attributes']
 heatmap_data = []
-labels = ['BM25 Baseline', 'GTE ModernBERT (Zero-Shot)', 'GTE ModernBERT (Fine-Tuned)', 'BGE Small (Fine-Tuned, 384D, fp32)']
+labels = []
 
-for row in [bm25, gte_zs, gte_ft, bge_ft_base]:
-    heatmap_data.append([row[f"{b}_mrr_at_10"] for b in buckets])
+# BM25
+heatmap_data.append([bm25_row[f"{b}_mrr_at_10"] for b in buckets])
+labels.append('BM25 Baseline')
 
-plt.figure(figsize=(11, 5))
+for model in models:
+    best_run = df[df['model'] == model].sort_values('overall_mrr_at_10', ascending=False).iloc[0]
+    heatmap_data.append([best_run[f"{b}_mrr_at_10"] for b in buckets])
+    labels.append(f'{model} (Best)')
+
+plt.figure(figsize=(12, 6))
 sns.heatmap(heatmap_data, annot=True, fmt=".3f", cmap="YlGnBu", xticklabels=buckets, yticklabels=labels, vmin=0.3, vmax=1.0)
-plt.title('MRR@10 by Corruption Category', fontsize=14, fontweight='bold')
+plt.title('MRR@10 by Category: Model Comparison (Best Configs)', fontsize=14, fontweight='bold')
 plt.xticks(rotation=20, ha='right', fontsize=10)
-plt.yticks(fontsize=10)
 plt.tight_layout()
-plt.savefig('results/plots/bucket_heatmap.png', dpi=300)
+plt.savefig('results/plots/bucket_heatmap_all.png', dpi=300)
 plt.close()
 
-print("Enhanced plots generated.")
+print("All-model enhanced plots generated.")
