@@ -126,11 +126,11 @@ We evaluated 10,000 queries across six corruption buckets.
 
 Zero-shot embedding models underperformed BM25 across the board. However, fine-tuning aligned the embedding spaces perfectly with our retrieval task.
 
-![Overall MRR@10](results/plots/mrr_overall.png)
+![Overall MRR@10](../results/plots/mrr_overall.png)
 
 BM25 scored a perfect 1.000 MRR@10 on pristine data. But its performance collapsed on partial records, dropping to 0.504 MRR@10 when both email and company were missing. Fine-tuning drastically improved the dense models on these hard queries.
 
-![Bucket Heatmap](results/plots/bucket_heatmap.png)
+![Bucket Heatmap](../results/plots/bucket_heatmap.png)
 
 The fine-tuned `gte-modernbert-base` model achieved 0.917 overall MRR@10, matching BM25. Crucially, it reached 0.509 MRR@10 on the missing email/company bucket, and matched or beat BM25 on heavily corrupted buckets like domain mismatches and typos. The `bge-small` fine-tuned model showed similar resilience, proving that supervised dense retrieval fixes lexical failure modes.
 
@@ -143,7 +143,7 @@ The model relies heavily on explicit text prefixes (`search_query: ` and `search
 
 The core of our second hypothesis was that MRL allows for massive index compression. 
 
-![Dimensionality Ablation: BGE-Small](results/plots/bge_ablation.png)
+![Dimensionality Ablation: BGE-Small](../results/plots/bge_ablation.png)
 
 MRL worked as intended. Truncating `bge-small` from 384 dimensions to 256 dimensions and applying int8 quantization yielded 0.907 overall MRR@10, an extremely minor drop from the full 384D FP32 baseline (0.898). This configuration requires a fraction of the memory of a full FP32 index. 
 
@@ -151,7 +151,7 @@ Binary quantization proved too destructive at low dimensions (dropping to 0.797 
 
 ### 5.4 Latency vs MRR Pareto Frontier
 
-![Latency vs MRR Pareto Frontier](results/plots/latency_pareto.png)
+![Latency vs MRR Pareto Frontier](../results/plots/latency_pareto.png)
 
 Dense retrieval remained fast enough for production. The p50 latency for `bge-small` (256-dim, int8) was 17.46 ms against a 1-million record LanceDB index. The `minilm-l6` models clustered around 6-8 ms. While BM25 remained the fastest at 3.25 ms, the compressed dense models are well within acceptable latency bounds for the approximate nearest neighbor (ANN) stage of a two-stage retrieval pipeline.
 

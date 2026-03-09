@@ -63,14 +63,14 @@ To solve the 1.5TB memory problem organically, we optimized the output embedding
 
 We ran parallel fine-tuning pipelines using [Modal](https://modal.com/) on A10G GPUs. Spinning up robust distributed remote infrastructure is a must when running sweeping ablations like this. Fine-tuning all five pipelines concurrently took exactly 60 minutes and cost **less than $15 in total compute.**
 
-![Modal Billing Dashboard](assets/modal-billing.png)
+![Modal Billing Dashboard](../assets/modal-billing.png)
 *Figure: The Modal billing dashboard demonstrating the $14.50 cost for training all constraints simultaneously.*
 
 ## Evaluating Accuracy Across Degradations
 
 We measured both Recall@10 (the proportion of queries where the canonical record appears in the top 10 results) and Mean Reciprocal Rank (MRR@10). While BM25 provides an incredibly strong baseline on exact lexical overlaps, the core of our evaluation focuses on the behavior of these models when the signal text is heavily degraded.
 
-![Bucket Heatmap](results/plots/bucket_heatmap.png)
+![Bucket Heatmap](../results/plots/bucket_heatmap.png)
 *Figure 1: Model performance (Overall MRR@10) across the six corruption buckets.*
 
 ### 1. GTE-ModernBERT Dominates Heavily Corrupted Queries
@@ -81,7 +81,7 @@ When the profile omits the email and company entirely, BM25 Recall@10 drops to 0
 
 Overall, the customized GTE-ModernBERT delivers an 0.966 global Recall@10, beating the 0.958 baseline set by BM25. Interestingly, its global MRR@10 (0.917) exactly matches BM25, proving it retrieves the right semantic candidates into the top slot as reliably as a rigid string match.
 
-![General Recall Comparisons](results/plots/mrr_overall.png)
+![General Recall Comparisons](../results/plots/mrr_overall.png)
 *Figure 2: Global MRR@10 metrics across all distinct models. Notice the vast gap between base and fine-tuned configurations for the smaller models.*
 
 ### 2. Catastrophic Forgetting in Rigid Architectures
@@ -114,7 +114,7 @@ Dense vectors carry strict search overhead. BM25 yields p50 latencies around 3.2
 
 To compress index footprint, we scaled the representations down directly at index time using our Matryoshka training. By querying LanceDB mathematically truncated and quantized, we avoided re-running the heavy neural encoding for the ablation.
 
-![Ablation Data](results/plots/bge_ablation.png)
+![Ablation Data](../results/plots/bge_ablation.png)
 *Figure 3: Ablation tracking dimensionality versus MRR@10 using BGE-Small.*
 
 Using BGE-Small and MiniLM, we saw binary embeddings collapse below 128 dimensions. But INT8 models held steady, matching the performance of their wider counterparts.
@@ -123,14 +123,14 @@ Using BGE-Small and MiniLM, we saw binary embeddings collapse below 128 dimensio
 
 At inference time, accuracy is only one axis of the problem. Latency and memory load govern operational limits.
 
-![Latency vs MRR Pareto](results/plots/latency_pareto.png)
+![Latency vs MRR Pareto](../results/plots/latency_pareto.png)
 *Figure 4: The latency-MRR Pareto frontier for fine-tuned dense retrievers vs. BM25.*
 
 We observed that **fine-tuned MiniLM-L6 mapped to a 128-INT8 configuration** returned results in 6.79ms (p50) and compressed the index to under 700MB. 
 
 Despite extreme volume compression, it holds a resilient 0.934 Recall@10 globally. This condenses the required 500M scale index from 1.5TB down to roughly 350GB, moving it firmly into operational viability.
 
-![Overall Recall](results/plots/overall_recall.png)
+![Overall Recall](../results/plots/overall_recall.png)
 *Figure 5: Overall Recall@10 by Model and Mode. Fine-tuning pushes the tiny 22M parameter MiniLM-L6 (0.928) perilously close to the zero-shot baseline of the 149M ModernBERT (0.941).*
 
 ## Code & Operational Architecture
