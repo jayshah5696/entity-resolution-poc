@@ -1,0 +1,21 @@
+O*NET-SOC Code	Title	Alternate Title	Short Title	Sources
+11-1011.00	Chief Executives	CEO	Chief Executives	08
+11-1011.00	Chief Executives	Chief Executive Officer	Chief Executives	08
+11-1011.00	Chief Executives	President	Chief Executives	08
+11-1021.00	General and Operations Managers	COO	General Managers	08
+11-1021.00	General and Operations Managers	Chief Operating Officer	General Managers	08
+11-1021.00	General and Operations Managers	Operations Manager	General Managers	08
+11-2021.00	Marketing Managers	VP Marketing	Marketing Managers	08
+11-2021.00	Marketing Managers	Vice President of Marketing	Marketing Managers	08
+11-2021.00	Marketing Managers	Director of Marketing	Marketing Managers	08
+11-3021.00	Computer and Information Systems Managers	CTO	IT Managers	08
+11-3021.00	Computer and Information Systems Managers	Chief Technology Officer	IT Managers	08
+11-3021.00	Computer and Information Systems Managers	VP Engineering	IT Managers	08
+11-3021.00	Computer and Information Systems Managers	Vice President of Engineering	IT Managers	08
+11-3031.00	Financial Managers	CFO	Financial Managers	08
+11-3031.00	Financial Managers	Chief Financial Officer	Financial Managers	08
+15-1252.00	Software Developers	Software Engineer	Software Developers	08
+15-1252.00	Software Developers	Senior Software Engineer	Software Developers	08
+15-1252.00	Software Developers	Staff Engineer	Software Developers	08
+15-1252.00	Software Developers	Principal Engineer	Software Developers	08
+15-1252.00	Software Developers	Backend Developer	Software Developers	08

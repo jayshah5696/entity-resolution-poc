@@ -1,0 +1,20 @@
+{
+  "generated_at": "2026-03-07T07:20:26.805707+00:00",
+  "hash_method": "sha256(entity_id) % 120",
+  "split_rules": {
+    "eval": "hash % 120 == 0",
+    "triplet_source": "hash % 120 in [1..20]",
+    "index": "remainder"
+  },
+  "counts": {
+    "total": 1200492,
+    "index": 989913,
+    "triplet_source": 200442,
+    "eval": 10137
+  },
+  "quality_steps": {
+    "name_company_collisions": 426,
+    "country_entropy_bits": 2.0662,
+    "domain_entropy_bits": 14.3899
+  }
+}

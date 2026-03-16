@@ -1,0 +1,5 @@
+Written to `context.md`. Here's the one-paragraph summary:
+
+---
+
+This is a research proof-of-concept investigating whether fine-tuned dense retrieval (bi-encoder embeddings with Matryoshka Representation Learning) outperforms BM25 for B2B entity resolution at 500M-record scale. **Phase 1** (complete, locked on `main`) benchmarked five embedding models against a BM25 baseline on synthetic B2B contact data with six corruption types, finding that a fine-tuned GTE-ModernBERT model achieves Recall@10 = 0.975 — a +10.2 percentage-point improvement over BM25 on the hardest corruption bucket. **Phase 2** (in progress on the `phase2` branch) extends the pipeline with a cross-encoder reranker layer sitting above the bi-encoder retrieval stage, training and evaluating four CE models (MiniLM, GTE-reranker-ModernBERT, BGE-Reranker-v2-m3, IBM Granite) using HuggingFace/Modal GPU infrastructure, LanceDB for vector indexing, and Polars for data processing.

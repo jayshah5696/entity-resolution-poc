@@ -1,0 +1,23 @@
+{
+  "generated_at": "2026-03-07T08:02:16.937417+00:00",
+  "total_triplets": 601326,
+  "source_profiles": 200442,
+  "triplets_per_profile": 3.0,
+  "corruption_type_distribution": {
+    "levenshtein_1": 188435,
+    "field_drop_single": 146964,
+    "case_mutation": 86092,
+    "abbreviation": 85912,
+    "truncation": 85057,
+    "domain_swap": 83783,
+    "nickname": 63171,
+    "field_drop_double": 42945,
+    "levenshtein_2": 42317,
+    "company_abbrev": 8656
+  },
+  "negative_source_distribution": {
+    "same_company_prefix": 400830,
+    "same_country": 200442,
+    "random": 54
+  }
+}

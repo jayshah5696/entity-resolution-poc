@@ -1,0 +1,11 @@
+LEI,Entity.LegalName,Entity.OtherEntityNames,Entity.LegalAddress.Country,Entity.LegalForm.EntityLegalFormCode,Entity.EntityStatus
+549300ABCDE12345FG01,Goldman Sachs Group Inc.,"[""The Goldman Sachs Group, Inc."", ""GS Group""]",US,8888,ACTIVE
+549300ABCDE12345FG02,Apple Inc.,[],US,8888,ACTIVE
+549300ABCDE12345FG03,"International Business Machines Corporation","[""IBM"", ""IBM Corp""]",US,8888,ACTIVE
+549300ABCDE12345FG04,Microsoft Corporation,"[""Microsoft Corp"", ""MSFT""]",US,8888,ACTIVE
+549300ABCDE12345FG05,JPMorgan Chase & Co.,"[""JP Morgan"", ""JPMorgan Chase""]",US,8888,ACTIVE
+549300ABCDE12345FG06,Barclays PLC,"[""Barclays Bank""]",GB,8888,ACTIVE
+549300ABCDE12345FG07,"Deutsche Bank Aktiengesellschaft","[""Deutsche Bank AG"", ""Deutsche Bank""]",DE,8888,ACTIVE
+549300ABCDE12345FG08,BNP Paribas SA,"[""BNP Paribas""]",FR,8888,ACTIVE
+549300ABCDE12345FG09,Toyota Motor Corporation,"[""Toyota"", ""Toyota Motor Corp""]",JP,8888,ACTIVE
+549300ABCDE12345FG10,Samsung Electronics Co. Ltd.,"[""Samsung Electronics"", ""Samsung""]",KR,8888,ACTIVE

@@ -1,0 +1,11 @@
+O*NET-SOC Code	Title	Reported Job Title	Sources
+11-1011.00	Chief Executives	CEO and Founder	08
+11-1011.00	Chief Executives	Managing Director	08
+11-1021.00	General and Operations Managers	General Manager	08
+11-1021.00	General and Operations Managers	Plant Manager	08
+11-2021.00	Marketing Managers	Head of Marketing	08
+11-3021.00	Computer and Information Systems Managers	Engineering Manager	08
+11-3021.00	Computer and Information Systems Managers	IT Director	08
+15-1252.00	Software Developers	Full Stack Developer	08
+15-1252.00	Software Developers	Front End Developer	08
+15-1252.00	Software Developers	DevOps Engineer	08

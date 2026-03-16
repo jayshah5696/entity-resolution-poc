@@ -1,0 +1,21 @@
+{
+  "generated_at": "2026-03-07T08:12:41.000329+00:00",
+  "total_queries": 60822,
+  "n_eval_profiles": 10137,
+  "buckets": [
+    "pristine",
+    "missing_firstname",
+    "missing_email_company",
+    "typo_name",
+    "domain_mismatch",
+    "swapped_attributes"
+  ],
+  "bucket_counts": {
+    "pristine": 10137,
+    "missing_firstname": 10137,
+    "missing_email_company": 10137,
+    "typo_name": 10137,
+    "domain_mismatch": 10137,
+    "swapped_attributes": 10137
+  }
+}

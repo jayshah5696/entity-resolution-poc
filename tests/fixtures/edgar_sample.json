@@ -1,0 +1,12 @@
+{
+  "cik_str": "0000320193",
+  "entityType": "operating",
+  "sic": "3571",
+  "sicDescription": "Electronic Computers",
+  "name": "Apple Inc.",
+  "tickers": ["AAPL"],
+  "formerNames": [
+    {"name": "APPLE COMPUTER INC", "from": "1977-01-03", "to": "2007-01-09"},
+    {"name": "APPLE INC", "from": "2007-01-09", "to": ""}
+  ]
+}
