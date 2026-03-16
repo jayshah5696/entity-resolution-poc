@@ -1,0 +1,10 @@
+{
+  "experiment_id": "008",
+  "stage1_model": "bm25_baseline",
+  "stage1_mode": "baseline",
+  "stage2_reranker": "minilm_reranker",
+  "stage2_mode": "zero_shot",
+  "top_k_stage1": 50,
+  "date": "TBD",
+  "status": "pending"
+}

@@ -1,0 +1,62 @@
+# LOCKED MODEL REGISTRY — Phase 2 Cross-Encoders
+# Lock date: 2026-03-15
+# DO NOT ADD MODELS without updating lock date and plan.md rationale section
+#
+# License constraint: Apache-2.0 or MIT only
+# Size constraint: ≤200M params (A10G VRAM budget)
+# Eliminated: Qwen3-Reranker (LLM-based, 60x slower inference)
+#             bge-reranker-v2.5-gemma2 (Gemma license, not Apache)
+#             jina-reranker-* (CC-BY-NC-4.0, not commercial-safe)
+
+models:
+  minilm_reranker:
+    hf_id: cross-encoder/ms-marco-MiniLM-L12-v2
+    params_m: 33
+    license: apache-2.0
+    context_tokens: 512
+    beir_ndcg10: ~50
+    finetune: false
+    note: "Latency baseline. Already trained on MS MARCO; additional finetune unlikely to help."
+
+  gte_reranker:
+    hf_id: Alibaba-NLP/gte-reranker-modernbert-base
+    params_m: 149
+    license: apache-2.0
+    context_tokens: 8192
+    beir_ndcg10: 56.2
+    finetune: true
+    note: "PRIMARY fine-tune target. Same ModernBERT backbone as Phase 1 bi-encoder (gte-modernbert-base). Flash Attention 2. TEI-native."
+
+  bge_reranker_m3:
+    hf_id: BAAI/bge-reranker-v2-m3
+    params_m: 570
+    license: apache-2.0
+    context_tokens: 8192
+    beir_ndcg10: 55.4
+    mteb_r: 57.03
+    finetune: false
+    note: "Zero-shot quality ceiling. 4.7M HF downloads — industry standard. Too large for M3 fine-tuning."
+
+  granite_reranker:
+    hf_id: ibm-granite/granite-embedding-reranker-english-r2
+    params_m: 149
+    license: apache-2.0
+    context_tokens: 8192
+    beir_ndcg10: 55.8
+    finetune: true
+    note: "Enterprise-clean data provenance — trained exclusively on permissive-licensed datasets. pListMLE + model merging."
+
+finetune_targets:
+  - gte_reranker
+  - granite_reranker
+
+zero_shot_references:
+  - minilm_reranker
+  - bge_reranker_m3
+
+hf_model_prefix: "jayshah5696/er-ce"
+# Final pushed model IDs:
+#   jayshah5696/er-ce-gte-reranker-ft
+#   jayshah5696/er-ce-granite-reranker-ft
+
+hf_dataset: "jayshah5696/entity-resolution-ce-pairs"

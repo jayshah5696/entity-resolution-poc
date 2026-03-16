@@ -1,0 +1,70 @@
+# Cross-Encoder Training Configuration — Phase 2
+# Mirrors configs/finetune_modal.yaml structure from Phase 1
+
+data:
+  train: data/phase2/ce_train.parquet
+  val: data/phase2/ce_val.parquet
+  test: data/phase2/ce_test.parquet       # LOCKED — never reference in training code
+  serialization: colval                   # COL/VAL Ditto-style format
+  top_k_stage1: 50                        # Stage 1 retrieves top-50 for CE
+  label_col: label                        # 1 = match, 0 = non-match
+  pos_neg_ratio: "1:1"
+
+training:
+  epochs: 5
+  batch_size: 64                          # pair-based CE uses more VRAM per pair
+  lr: 2.0e-5
+  warmup_steps: 200                       # NOT warmup_ratio (deprecated in ST 3.4+)
+  weight_decay: 0.01
+  max_length: 512                         # records are short; 512 tokens sufficient
+  fp16: false                             # local M3 dev
+  bf16: true                              # Modal A10G
+  dataloader_num_workers: 0              # required for MPS
+  seed: 42
+
+loss:
+  # BCE for stable convergence (Epochs 1-3), then switch to LambdaLoss for nDCG alignment (Epochs 4-5)
+  phase1_epochs: 3
+  phase1_loss: bce
+  phase2_epochs: 2
+  phase2_loss: lambda_rank
+
+hard_negative_curriculum:
+  epoch_1: {hard_pct: 0.20, random_pct: 0.80}
+  epoch_2: {hard_pct: 0.40, random_pct: 0.60}
+  epoch_3: {hard_pct: 0.60, random_pct: 0.40}
+  epoch_4: {hard_pct: 0.80, random_pct: 0.20}
+  epoch_5: {hard_pct: 0.80, random_pct: 0.20}
+
+hard_negative_filter:
+  # Exclude pairs where stock CE scores neg within 3 points of pos (likely false negatives)
+  # Matches SBERT MS MARCO best practice
+  min_margin: 3.0
+  stock_ce_for_filter: cross-encoder/ms-marco-MiniLM-L12-v2
+
+eval:
+  strategy: steps
+  eval_steps: 500
+  save_steps: 500
+  load_best_model_at_end: true
+  metric_for_best_model: ndcg_at_10
+  greater_is_better: true
+
+threshold_calibration:
+  method: f1_maximize        # find threshold that maximizes F1 on val set
+  fallback: 0.5
+
+modal:
+  gpu: A10G                  # upgrade to A100 only if OOM
+  timeout_min: 120
+  volume: entity-resolution-ce-checkpoints
+  python_version: "3.11"
+
+wandb:
+  project: entity-resolution-poc
+  entity: jayshah5696
+  tags: [phase2, cross-encoder, reranker]
+
+hf_hub:
+  # Set HF_HUB_DISABLE_XET=1 before any push — without it, uploads hang
+  push_after_training: true

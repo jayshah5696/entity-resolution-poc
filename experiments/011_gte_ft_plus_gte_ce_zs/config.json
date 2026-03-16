@@ -1,0 +1,10 @@
+{
+  "experiment_id": "011",
+  "stage1_model": "gte_modernbert_base",
+  "stage1_mode": "fine_tuned",
+  "stage2_reranker": "gte_reranker",
+  "stage2_mode": "zero_shot",
+  "top_k_stage1": 50,
+  "date": "TBD",
+  "status": "pending"
+}
