@@ -144,3 +144,4 @@ Thumbs.db
 # uv.lock is committed (reproducible installs)
 # uv cache is not
 .uv/
+*.pi/
