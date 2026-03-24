@@ -6,9 +6,9 @@
   "dim": 768,
   "n_records": 1000050,
   "index_size_mb": 3283.89,
-  "build_timestamp": "2026-03-09T06:17:49.942792+00:00",
+  "build_timestamp": "2026-03-22T21:53:13.654737+00:00",
   "device": "mps",
   "model_path": "jayshah5696/er-gte-modernbert-base-pipe-ft",
-  "build_time_sec": 131.41,
+  "build_time_sec": 132.18,
   "derivation_source": "results/indexes/gte_modernbert_base_ft_pipe"
 }
