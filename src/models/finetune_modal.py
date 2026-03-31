@@ -173,7 +173,7 @@ def finetune_one(model_key: str, resume: bool = False) -> dict:
     from rich.console import Console
     from sentence_transformers import SentenceTransformer, SentenceTransformerTrainer
     from sentence_transformers.losses import MatryoshkaLoss, MultipleNegativesRankingLoss
-    from sentence_transformers.training_args import SentenceTransformerTrainingArguments
+    from sentence_transformers.training_args import BatchSamplers, SentenceTransformerTrainingArguments
     from src.models.finetune_config import load_config
     
     console = Console()
@@ -322,10 +322,13 @@ def finetune_one(model_key: str, resume: bool = False) -> dict:
         output_dir=str(checkpoint_dir),
         num_train_epochs=cfg.epochs,
         per_device_train_batch_size=cfg.batch_size,
+        batch_sampler=BatchSamplers.NO_DUPLICATES,
         learning_rate=cfg.learning_rate,
         warmup_steps=warmup_steps,
         weight_decay=cfg.weight_decay,
         logging_steps=cfg.logging_steps,
+        eval_steps=cfg.save_steps,
+        eval_strategy="steps",
         save_steps=cfg.save_steps,
         save_total_limit=cfg.save_total_limit,
         seed=cfg.seed,
@@ -336,11 +339,15 @@ def finetune_one(model_key: str, resume: bool = False) -> dict:
         gradient_accumulation_steps=cfg.grad_accum,
         gradient_checkpointing=cfg.grad_checkpointing,
         report_to=["wandb"],
-        load_best_model_at_end=False,
+        load_best_model_at_end=True,
         run_name=f"{model_key}_pipe_ft",
     )
 
     # ---- Trainer (curriculum-aware subclass) ----
+    # TODO: Wire InformationRetrievalEvaluator here for live retrieval metrics during training.
+    # The eval data (queries, corpus, relevant_docs) is available post-training in run_eval.py.
+    # Wiring it in would enable load_best_model_at_end=True to select on recall@10 not epoch count.
+    # See: sentence_transformers.evaluation.InformationRetrievalEvaluator
     trainer = CurriculumTrainer(
         model=model,
         args=train_args,
